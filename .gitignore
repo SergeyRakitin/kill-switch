@@ -1,0 +1,9 @@
+/temp/
+/dist/
+/frontend/node_modules/
+/frontend/dist/
+/cmd/guard-desktop/*_windows_amd64.syso
+*.log
+.env
+.env.*
+!.env.example
