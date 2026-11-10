@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -18,7 +20,12 @@ const emptyStatus = `{"state":"disabled","wfp":{"provider":{"present":false},"su
 
 func newTestService(t *testing.T, run func(context.Context, ...string) ([]byte, error)) *Service {
 	t.Helper()
-	service, err := New(t.TempDir())
+	dir := t.TempDir()
+	// Служебная цель probe указывает на guard-probe.exe рядом с GUI; перед вызовом guard.exe файл должен существовать.
+	if err := os.WriteFile(filepath.Join(dir, "guard-probe.exe"), []byte("probe fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	service, err := New(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -339,6 +346,19 @@ func TestServiceAddsNameTarget(t *testing.T) {
 	}
 	if _, err := service.BrowseTarget(target.ID); err == nil || !strings.Contains(err.Error(), "именем файла") {
 		t.Fatalf("file picker allowed for name target: %v", err)
+	}
+}
+
+func TestServicePreviewExplainsMissingExe(t *testing.T) {
+	service := newTestService(t, func(_ context.Context, args ...string) ([]byte, error) {
+		t.Fatalf("guard.exe called despite a missing EXE: %v", args)
+		return nil, nil
+	})
+	missing := filepath.Join(service.exeDir, "Claude_4.23118.1.0_x64", "app", "resources", "cowork-svc.exe")
+	service.view.Settings.Targets = append(service.view.Settings.Targets, ui.Target{ID: "custom-claude-cowork", Path: missing, Enabled: true})
+	_, err := service.Preview()
+	if err == nil || !strings.Contains(err.Error(), "Файл не найден: "+missing) || !strings.Contains(err.Error(), "EXE по имени") || strings.Contains(err.Error(), `\\`) {
+		t.Fatalf("unclear missing-file error: %v", err)
 	}
 }
 

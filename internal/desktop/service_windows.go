@@ -227,6 +227,9 @@ func (s *Service) Preview() (result PreviewResult, err error) {
 	if err != nil {
 		return result, err
 	}
+	if err = missingAppsError(targets); err != nil {
+		return result, err
+	}
 	plan, raw, err := s.client.PreviewTargets(context.Background(), targets, settings.VPNInterfaceGUID)
 	warnings := append(s.warnings(), plan.Warnings...)
 
@@ -296,6 +299,16 @@ func (s *Service) Canary(confirmed bool) (View, error) {
 			return raw + "\nУдаление: " + removal, err
 		}, allObjectsAbsent, false)
 	})
+}
+
+// missingAppsError объясняет по-русски, почему план не строится: файла цели по точному пути уже нет.
+// Проверка идёт до вызова guard.exe, чтобы вместо системной ошибки показать, что делать.
+func missingAppsError(targets ui.TargetSet) error {
+	missing := targets.MissingApps()
+	if len(missing) == 0 {
+		return nil
+	}
+	return fmt.Errorf("Файл не найден: %s. Вероятно, приложение обновилось и переехало в другую папку. Выключите или удалите эту запись в списке «EXE по точному пути»; чтобы защита не зависела от папки, используйте «EXE по имени (любая папка)».", strings.Join(missing, "; "))
 }
 
 func allObjectsAbsent(view View) bool {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -210,6 +211,18 @@ func (t TargetSet) Display() []string {
 		result = append(result, "name:"+name)
 	}
 	return result
+}
+
+// MissingApps возвращает пути EXE из набора, которых нет на диске.
+// Так бывает после обновления, которое переносит приложение в новый каталог.
+func (t TargetSet) MissingApps() []string {
+	missing := []string{}
+	for _, app := range t.Apps {
+		if _, err := os.Stat(app); errors.Is(err, fs.ErrNotExist) {
+			missing = append(missing, app)
+		}
+	}
+	return missing
 }
 
 func (s Settings) ActiveTargets(exeDir string) (TargetSet, error) {

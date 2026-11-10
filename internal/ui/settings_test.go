@@ -127,6 +127,19 @@ func TestMSIXTargetsRemainBackwardCompatible(t *testing.T) {
 	}
 }
 
+func TestMissingApps(t *testing.T) {
+	dir := t.TempDir()
+	present := filepath.Join(dir, "present.exe")
+	if err := os.WriteFile(present, []byte("exe"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	gone := filepath.Join(dir, "old-version", "app.exe")
+	set := TargetSet{Apps: []string{present, gone}, FileNames: []string{"claude.exe"}}
+	if got := set.MissingApps(); !reflect.DeepEqual(got, []string{gone}) {
+		t.Fatalf("missing=%v", got)
+	}
+}
+
 func TestNameTargets(t *testing.T) {
 	dir := t.TempDir()
 	s := DefaultSettings(dir)

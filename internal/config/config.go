@@ -64,51 +64,51 @@ func (c Config) Validate() error {
 	seen := map[string]bool{}
 	for _, app := range c.Applications {
 		if !windowsAbsoluteEXE(app) {
-			return fmt.Errorf("application must be an absolute local .exe path: %q", app)
+			return fmt.Errorf("application must be an absolute local .exe path: \"%s\"", app)
 		}
 		normalized := strings.ToLower(filepath.Clean(app))
 		if seen[normalized] {
-			return fmt.Errorf("duplicate application: %q", app)
+			return fmt.Errorf("duplicate application: \"%s\"", app)
 		}
 		seen[normalized] = true
 		fi, err := os.Lstat(app)
 		if err != nil {
-			return fmt.Errorf("application %q: %w", app, err)
+			return fmt.Errorf("application \"%s\": %w", app, err)
 		}
 		if !fi.Mode().IsRegular() || fi.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("application is not a regular file: %q", app)
+			return fmt.Errorf("application is not a regular file: \"%s\"", app)
 		}
 		real, err := canonicalPath(app)
 		if err != nil || !strings.EqualFold(filepath.Clean(real), filepath.Clean(app)) {
-			return fmt.Errorf("application uses a reparse/ambiguous path: %q", app)
+			return fmt.Errorf("application uses a reparse/ambiguous path: \"%s\"", app)
 		}
 	}
 	packages := map[string]bool{}
 	for _, family := range c.PackageFamilies {
 		if !ValidPackageFamily(family) {
-			return fmt.Errorf("invalid MSIX package family: %q", family)
+			return fmt.Errorf("invalid MSIX package family: \"%s\"", family)
 		}
 		normalized := strings.ToLower(family)
 		if packages[normalized] {
-			return fmt.Errorf("duplicate MSIX package family: %q", family)
+			return fmt.Errorf("duplicate MSIX package family: \"%s\"", family)
 		}
 		packages[normalized] = true
 	}
 	names := map[string]bool{}
 	for _, name := range c.FileNames {
 		if !ValidFileName(name) {
-			return fmt.Errorf("file name must be a plain ASCII .exe name without folders or wildcards: %q", name)
+			return fmt.Errorf("file name must be a plain ASCII .exe name without folders or wildcards: \"%s\"", name)
 		}
 		normalized := strings.ToLower(name)
 		if names[normalized] {
-			return fmt.Errorf("duplicate file name: %q", name)
+			return fmt.Errorf("duplicate file name: \"%s\"", name)
 		}
 		names[normalized] = true
 	}
 	for _, raw := range c.TrustedVPNServerIPs {
 		ip, err := netip.ParseAddr(raw)
 		if err != nil || ip.Zone() != "" {
-			return fmt.Errorf("invalid trustedVpnServerIPs entry: %q", raw)
+			return fmt.Errorf("invalid trustedVpnServerIPs entry: \"%s\"", raw)
 		}
 	}
 	return nil

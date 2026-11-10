@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -22,6 +23,11 @@ func TestValidationRejectsAmbiguousCoverage(t *testing.T) {
 	c.Applications = []string{`C:\path\*.exe`}
 	if err := c.Validate(); err == nil {
 		t.Fatal("wildcard accepted")
+	}
+	missing := filepath.Join(filepath.Dir(app), "old-version", "probe.exe")
+	c.Applications = []string{missing}
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), `"`+missing+`"`) || strings.Contains(err.Error(), `\\`) {
+		t.Fatalf("missing application error must show the path with single backslashes: %v", err)
 	}
 	c.Applications = []string{app}
 	c.SchemaVersion = 2

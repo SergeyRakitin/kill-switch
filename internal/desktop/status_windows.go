@@ -144,6 +144,9 @@ func (s *Service) verifyPaths(ctx context.Context, settings ui.Settings, snapsho
 	if err != nil {
 		return empty, err
 	}
+	if err := missingAppsError(targets); err != nil {
+		return empty, err
+	}
 	_, raw, err := s.client.PreviewTargets(ctx, targets, settings.VPNInterfaceGUID)
 	if err != nil {
 		return empty, err
