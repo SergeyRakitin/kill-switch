@@ -1,5 +1,6 @@
 /temp/
 /dist/
+/dist/guard-ui.json
 /logs/
 /frontend/node_modules/
 /frontend/dist/
