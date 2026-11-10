@@ -1,10 +1,30 @@
 param(
-    [string]$GoExe = 'D:\projects\github\tools\go\bin\go.exe',
-    [string]$WindresExe = 'D:\projects\github\tools\mingw64\bin\windres.exe',
+    [string]$GoExe = '',
+    [string]$WindresExe = '',
     [switch]$SkipInstall
 )
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path $PSScriptRoot -Parent
+if (-not $GoExe) {
+    $goCommand = Get-Command 'go.exe' -ErrorAction SilentlyContinue
+    if ($goCommand) {
+        $GoExe = $goCommand.Source
+    } elseif (Test-Path 'D:\projects\github\tools\go\bin\go.exe') {
+        $GoExe = 'D:\projects\github\tools\go\bin\go.exe'
+    } else {
+        throw 'Go not found in PATH. Pass -GoExe with the full path to go.exe.'
+    }
+}
+if (-not $WindresExe) {
+    $windresCommand = Get-Command 'windres.exe' -ErrorAction SilentlyContinue
+    if ($windresCommand) {
+        $WindresExe = $windresCommand.Source
+    } elseif (Test-Path 'D:\projects\github\tools\mingw64\bin\windres.exe') {
+        $WindresExe = 'D:\projects\github\tools\mingw64\bin\windres.exe'
+    } else {
+        throw 'windres not found in PATH. Pass -WindresExe with the full path to windres.exe.'
+    }
+}
 $originalLocation = Get-Location
 $previousEnv = @{}
 foreach ($name in @('GOPATH', 'GOMODCACHE', 'TEMP', 'TMP', 'CGO_ENABLED')) {
@@ -33,6 +53,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Desktop service tests failed' }
     & $GoExe build -trimpath -o 'dist/guard.exe' ./cmd/guard
     if ($LASTEXITCODE -ne 0) { throw 'Guard build failed' }
+    & $GoExe build -trimpath -o 'dist/guard-probe.exe' ./cmd/guard-probe
+    if ($LASTEXITCODE -ne 0) { throw 'Probe build failed' }
     & $GoExe build -trimpath -tags production -ldflags '-H windowsgui' -o 'dist/guard-desktop.exe' ./cmd/guard-desktop
     if ($LASTEXITCODE -ne 0) { throw 'Desktop build failed' }
     Write-Output (Join-Path $projectRoot 'dist/guard-desktop.exe')

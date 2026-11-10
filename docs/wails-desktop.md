@@ -10,7 +10,7 @@
 & 'D:\projects\github\kill-switch\scripts\build-desktop.ps1'
 ```
 
-Скрипт устанавливает зависимости через `npm ci`, собирает React, запускает тесты GUI-сервиса, встраивает Windows manifest и собирает `dist/guard.exe` и `dist/guard-desktop.exe`. CLI собирается вместе с окном, потому что окно вызывает его для диагностики и WFP. Для повторной сборки с уже установленными зависимостями используйте `-SkipInstall`. Пути к Go и windres можно передать параметрами `-GoExe` и `-WindresExe`. Используется уже установленный `D:\projects\github\tools\mingw64\bin\windres.exe`. При сборке правила WFP не меняются.
+Скрипт устанавливает зависимости через `npm ci`, собирает React, запускает тесты GUI-сервиса, встраивает Windows manifest и собирает `dist/guard.exe`, `dist/guard-desktop.exe` и `dist/guard-probe.exe`. CLI собирается вместе с окном, потому что окно вызывает его для диагностики и WFP; probe нужен для безопасной сетевой проверки. Для повторной сборки с уже установленными зависимостями используйте `-SkipInstall`. Go и windres ищутся в `PATH`, а пути к ним можно передать параметрами `-GoExe` и `-WindresExe`. При сборке правила WFP не меняются.
 
 ## Устройство
 
