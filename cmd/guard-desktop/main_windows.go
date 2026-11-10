@@ -50,10 +50,9 @@ func main() {
 	})
 	window = app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name: "main", Title: "VPN Kill Switch", URL: "/",
-		Width: 1000, Height: 680, MinWidth: 720, MinHeight: 500,
-		BackgroundColour:           application.NewRGB(8, 18, 27),
-		DefaultContextMenuDisabled: true,
-		Windows:                    application.WindowsWindow{Theme: application.Dark},
+		Width: 860, Height: 680, MinWidth: 640, MinHeight: 500,
+		BackgroundColour: application.NewRGB(8, 18, 27),
+		Windows:          application.WindowsWindow{Theme: application.Dark},
 	})
 	desktop.SetFilePicker(service, func() (string, error) {
 		return app.Dialog.OpenFile().CanChooseFiles(true).AddFilter("Приложения Windows", "*.exe").AttachToWindow(window).PromptForSingleSelection()

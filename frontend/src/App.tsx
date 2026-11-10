@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Activity, AppWindow, Check, ChevronRight, CircleAlert, CircleHelp, Code2, Sparkles, ClipboardCopy, Download, EllipsisVertical, FileSearch, FileText, FlaskConical, House, Info, LayoutGrid, Monitor, Play, Plus, RefreshCw, Settings, Shield, ShieldCheck, Terminal, Trash2, X } from 'lucide-react'
+import { Activity, AppWindow, Check, CircleAlert, CircleHelp, Code2, Sparkles, ClipboardCopy, Download, EllipsisVertical, FileSearch, FileText, FlaskConical, House, Info, LayoutGrid, Monitor, Plus, RefreshCw, Settings, Shield, ShieldCheck, Terminal, Trash2, X } from 'lucide-react'
 import { Clipboard } from '@wailsio/runtime'
 import { api, type Event, type Preview, type Target, type View } from './api'
+import { WfpStatus } from './WfpStatus'
 import './style.css'
 
 const routes = [
@@ -21,6 +22,8 @@ type Confirmation = {
   run?: () => Promise<View>
   danger?: boolean
   changesFilters?: boolean
+  onSuccess?: (result: View) => void
+  onFailure?: (message: string, result: View | null) => void
 }
 
 const states = {
@@ -109,11 +112,12 @@ function App() {
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null)
   const [menu, setMenu] = useState<string | null>(null)
   const [journalCopied, setJournalCopied] = useState(false)
+  const [diagnosticCopied, setDiagnosticCopied] = useState(false)
   const inFlight = useRef(false)
   const modalOpen = useRef(false)
   const main = useRef<HTMLElement>(null)
 
-  async function perform<T>(action: () => Promise<T>, accept: (result: T) => void) {
+  async function perform<T>(action: () => Promise<T>, accept: (result: T) => void, reject?: (message: string, result: View | null) => void) {
     if (inFlight.current) return
     inFlight.current = true
     setBusy(true)
@@ -123,7 +127,12 @@ function App() {
     } catch (failure) {
       const message = failure instanceof Error ? failure.message : String(failure)
       setError(message)
-      try { setView(await api.snapshot()) } catch { /* The desktop bridge may be unavailable. */ }
+      let latest: View | null = null
+      try {
+        latest = await api.snapshot()
+        setView(latest)
+      } catch { /* The desktop bridge may be unavailable. */ }
+      reject?.(message, latest)
     } finally {
       inFlight.current = false
       setBusy(false)
@@ -155,6 +164,25 @@ function App() {
     }
   }, [menu])
 
+  useEffect(() => {
+    const selectOutput = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.code !== 'KeyA') return
+      if (event.target instanceof Element && event.target.closest('dialog, input, textarea, [contenteditable="true"]')) return
+      const region = main.current?.querySelector<HTMLElement>('[data-selectable-region]')
+      if (!region) return
+      event.preventDefault()
+      event.stopPropagation()
+      region.focus({ preventScroll: true })
+      const range = document.createRange()
+      range.selectNodeContents(region)
+      const selection = window.getSelection()
+      selection?.removeAllRanges()
+      selection?.addRange(range)
+    }
+    document.addEventListener('keydown', selectOutput, true)
+    return () => document.removeEventListener('keydown', selectOutput, true)
+  }, [route])
+
   function navigate(next: Route) {
     setMenu(null)
     setRoute(next)
@@ -175,17 +203,18 @@ function App() {
     ?? adapters.find(adapter => !adapterGuid(view) && same(adapter.name, view?.settings.vpnInterfaceName ?? ''))
   const vpnName = matchingAdapter?.name || view?.settings.vpnInterfaceName || 'Интерфейс VPN'
   const vpnStatus = view?.vpnStatus === 'connected' ? 'Подключён' : view?.vpnStatus === 'disconnected' ? 'Отключён' : 'Статус неизвестен'
-  const policyKnown = status === 'active' || status === 'disabled'
   const isVerified = (target: Target) => status === 'active' && target.enabled && (view?.verifiedTargetIds ?? []).includes(target.id)
-  const verifiedCount = targets.filter(isVerified).length
+  const installedPaths = view?.installedPaths ?? []
+  const installedSummary = installedPaths.length ? installedPaths.map(filename).join(', ') :
+    status === 'disabled' ? 'Нет установленных правил' : 'Список не подтверждён'
   const canInstall = available && !(status === 'active' && !view?.configDirty)
   const filterSummary = status === 'error' ? 'Ошибка чтения' : status === 'unknown' ? 'Не проверено' :
     view?.objectsPresent ? `Фильтров: ${view.filterCount}` : 'Объекты не обнаружены'
   const errorText = error || view?.error
 
   const inspectPlan = () => void perform(api.preview, preview => ask({
-    title: 'План правил WFP',
-    detail: <PreviewDetails preview={preview} />,
+    title: 'Что изменится в WFP',
+    detail: <><p>Только предпросмотр. Ничего не применяется.</p><PreviewDetails preview={preview} /></>,
   }))
   const install = () => void perform(api.preview, preview => ask({
     title: 'Установить правила WFP',
@@ -202,16 +231,43 @@ function App() {
     danger: true,
     changesFilters: true,
   })
+  const canaryFailureSummary = (result: View | null) => {
+    if (!result) return 'После ошибки состояние WFP прочитать не удалось. Выполненные шаги указаны в диагностике.'
+    if (result.objectsPresent) return `После ошибки обнаружены собственные объекты WFP (фильтров: ${result.filterCount}). Это могут быть ранее установленные правила или объекты незавершённой проверки. Подробности — в диагностике.`
+    if (result.status === 'disabled') return 'Контрольное чтение после ошибки: собственные объекты WFP не обнаружены. Какие шаги были выполнены, указано в диагностике.'
+    return 'Итоговое состояние WFP после ошибки не подтверждено. Выполненные шаги указаны в диагностике.'
+  }
   const canary = () => ask({
-    title: 'Запустить тест восстановления?',
-    label: 'Запустить тест',
-    detail: <p>Canary создаёт служебные объекты WFP без фильтров, затем удаляет их и проверяет восстановление. Проверка не охватывает утечки или сетевой трафик.</p>,
+    title: 'Проверить запись в WFP?',
+    label: 'Проверить',
+    detail: <p>Будут созданы и удалены служебные объекты WFP без сетевых фильтров. VPN и трафик не проверяются. Если собственные объекты уже существуют, проверка отклоняется без изменения.</p>,
     run: api.canary,
     changesFilters: true,
+    onSuccess: () => ask({
+      title: 'Запись в WFP работает',
+      detail: <>
+        <p className="success"><strong>Проверка успешно завершена.</strong></p>
+        <p>Созданы служебные объекты WFP: provider и sublayer. Их наличие подтверждено повторным чтением.</p>
+        <p>Затем оба объекта удалены. Контрольное чтение подтвердило, что собственных объектов WFP не осталось.</p>
+        <p>Сетевые фильтры не создавались. VPN и трафик не проверялись.</p>
+      </>,
+    }),
+    onFailure: (message, result) => ask({
+      title: 'Проверка записи в WFP не выполнена',
+      detail: <>
+        <p className="error">{message}</p>
+        <p>{canaryFailureSummary(result)}</p>
+        <button className="text-button" onClick={() => { dismiss(); navigate('diagnostics') }}>Открыть диагностику</button>
+      </>,
+    }),
   })
   const copyJournal = () => void perform(
     () => Clipboard.SetText(events.map(event => `${event.time}\t${event.level}\t${event.message}`).join('\r\n')),
     () => setJournalCopied(true),
+  )
+  const copyDiagnostic = () => void perform(
+    () => Clipboard.SetText(view?.diagnostic ?? ''),
+    () => setDiagnosticCopied(true),
   )
 
   const targetActions = (target: Target) => <>
@@ -235,7 +291,7 @@ function App() {
       {menu === target.id && <div className="popover">
         <button onClick={() => ask({ title: 'Подробности EXE', detail: <><strong>{targetName(target)}</strong><code>{target.path === 'Z' ? 'Путь не выбран' : target.path}</code></> })}>Подробности EXE</button>
         <button onClick={() => update(() => api.browseTarget(target.id))}>Выбрать другой EXE</button>
-        {target.id.startsWith('custom-') && <button className="error" onClick={() => ask({
+        {target.id !== 'probe' && <button className="error" onClick={() => ask({
           title: 'Удалить приложение из списка?',
           label: 'Удалить приложение',
           detail: <code className="break-all">{target.path}</code>,
@@ -261,57 +317,43 @@ function App() {
       {errorText && !(route === 'home' && status === 'error') && <div className="error-banner" role="alert"><CircleAlert size={17} /><div><strong>{view ? 'Операция завершилась с ошибкой' : 'Сервис Wails недоступен'}</strong>{route === 'diagnostics' ? <div>{errorText}</div> : <button className="text-button" onClick={() => navigate('diagnostics')}>Диагностика</button>}</div><button className="icon-button" aria-label="Скрыть сообщение" disabled={!error} onClick={() => setError('')}><X size={16} /></button></div>}
 
       {route === 'home' ? <div className="dashboard">
-        <div className="dashboard-main">
-          <section className={'hero ' + statusClass}>
-            <ShieldCheck className="hero-icon" size={48} strokeWidth={1.65} />
-            <div><h1>{changesFilters ? 'Выполняется операция' : statusTitle}</h1><p>{!view && !busy ? 'Состояние защиты доступно в настольном приложении.' : statusDetail}</p></div>
-            <Switch checked={status === 'active'} label="Правила WFP установлены" disabled={!available} onChange={status === 'active' ? remove : install} />
-          </section>
-          <button className="vpn-card panel" onClick={() => navigate('settings')} aria-label="Выбрать интерфейс VPN">
-            <span className="vpn-icon"><Monitor size={21} /></span>
-            <span className="vpn-copy"><strong>{vpnName}</strong><small className={view?.vpnStatus === 'connected' ? 'success' : ''}><span className="dot" />{vpnStatus}</small></span>
-            <ChevronRight size={17} className="text-muted" />
-          </button>
-          <section className="panel apps">
-            <PanelTitle icon={<LayoutGrid size={17} />} action={<button className="button primary compact" disabled={!available} onClick={() => update(() => api.browseTarget(''))}><Plus size={15} />Добавить приложение</button>}>
-              Защищаемые приложения <span className="counter">{targets.length}</span>
-            </PanelTitle>
-            <ul className="app-list">
-              {targets.map(target => {
-                const Glyph = target.id === 'claude' ? Sparkles : target.id === 'codex' ? Code2 : /probe|code|terminal|powershell|cmd/i.test(filename(target.path)) ? Terminal : AppWindow
-                const verified = isVerified(target)
-                return <li key={target.id}>
-                  <span className={'app-icon ' + target.id}><Glyph size={18} /></span>
-                  <div className="app-copy"><strong>{targetName(target)}</strong><small title={target.path === 'Z' ? undefined : target.path}>{target.path === 'Z' ? 'Путь к EXE не выбран' : target.path}</small></div>
-                  <span className={'badge ' + (verified ? 'verified' : '')}>{verified ? <ShieldCheck size={12} /> : <Shield size={12} />}{verified ? 'Через VPN' : target.enabled ? 'Не подтверждено' : 'Выключено'}</span>
-                  {targetActions(target)}
-                </li>
-              })}
-            </ul>
-            {!targets.length && <p className="empty">{view ? 'Добавьте EXE приложения, которое должно работать через VPN.' : 'Конфигурация пока недоступна.'}</p>}
-          </section>
-          <div className="main-actions">
-            <button className="button primary" disabled={!canInstall} onClick={install}><Download size={16} />Установить правила</button>
-            <button className="button" disabled={!available || (status === 'disabled' && !view?.objectsPresent)} onClick={remove}><Trash2 size={16} />Удалить правила</button>
-            <button className="button secondary" disabled={busy || view?.busy} onClick={() => update(api.refresh)}><RefreshCw size={16} />Обновить статус</button>
-          </div>
-        </div>
-        <div className="dashboard-side">
-          <section className="panel status-panel">
-            <PanelTitle>Состояние</PanelTitle>
-            <ul>
-              {[
-                [status === 'active', 'Фильтры WFP', filterSummary],
-                [view?.vpnStatus === 'connected', 'VPN-интерфейс', view?.vpnStatus === 'connected' ? vpnName : vpnStatus],
-                [verifiedCount > 0, 'Приложения', policyKnown ? `${verifiedCount} из ${targets.length} подтверждено` : 'Не подтверждено'],
-              ].map(([ok, title, detail]) => <li key={String(title)}><span className={'status-icon ' + (ok ? 'good' : '')}>{ok ? <Check size={15} /> : <CircleHelp size={15} />}</span><div><strong>{title}</strong><small>{detail}</small></div></li>)}
-            </ul>
-          </section>
-          <section className="panel canary">
-            <PanelTitle icon={<FlaskConical size={17} />}>Тест Canary</PanelTitle>
-            <p>Проверяет создание и удаление служебных объектов WFP без фильтров.</p>
-            <button className="button secondary w-full" disabled={!available} onClick={canary}><Play size={14} />Запустить тест</button>
-          </section>
+        <section className={'hero ' + statusClass}>
+          <ShieldCheck className="hero-icon" size={48} strokeWidth={1.65} />
+          <div><h1>{changesFilters ? 'Выполняется операция' : statusTitle}</h1><p>{!view && !busy ? 'Состояние защиты доступно в настольном приложении.' : statusDetail}</p></div>
+          <Switch checked={status === 'active'} label="Правила WFP установлены" disabled={!available} onChange={status === 'active' ? remove : install} />
+        </section>
+        <section className="panel status-panel">
+          <PanelTitle>Состояние</PanelTitle>
+          <ul>
+            <li><span className={'status-icon ' + (status === 'active' ? 'good' : '')}>{status === 'active' ? <Check size={15} /> : <CircleHelp size={15} />}</span><div><strong>Фильтры WFP</strong><small>{filterSummary}</small></div></li>
+            <li><span className={'status-icon ' + (view?.vpnStatus === 'connected' ? 'good' : '')}>{view?.vpnStatus === 'connected' ? <Check size={15} /> : <CircleHelp size={15} />}</span><div><strong>VPN-интерфейс</strong><small>{vpnName} · {vpnStatus}</small></div></li>
+            <li><span className={'status-icon ' + (installedPaths.length ? 'good' : '')}>{installedPaths.length ? <Check size={15} /> : <CircleHelp size={15} />}</span><div><strong>Правила установлены для приложений</strong><small title={installedPaths.join('\n')}>{installedSummary}</small></div></li>
+          </ul>
+          {view?.configDirty && <p className="warning pending-changes">Есть изменения, установите новые правила.</p>}
+        </section>
+        <section className="panel apps">
+          <PanelTitle icon={<LayoutGrid size={17} />} action={<button className="button primary compact" disabled={!available} onClick={() => update(() => api.browseTarget(''))}><Plus size={15} />Добавить приложение</button>}>
+            Защищаемые приложения <span className="counter">{targets.length}</span>
+          </PanelTitle>
+          <ul className="app-list">
+            {targets.map(target => {
+              const executable = filename(target.path).toLowerCase()
+              const Glyph = executable === 'claude.exe' ? Sparkles : executable === 'codex.exe' ? Code2 : /probe|code|terminal|powershell|cmd/i.test(executable) ? Terminal : AppWindow
+              const verified = isVerified(target)
+              return <li key={target.id}>
+                <span className={'app-icon ' + (executable === 'claude.exe' ? 'claude' : executable === 'codex.exe' ? 'codex' : target.id)}><Glyph size={18} /></span>
+                <div className="app-copy"><strong>{targetName(target)}</strong><small title={target.path === 'Z' ? undefined : target.path}>{target.path === 'Z' ? 'Путь к EXE не выбран' : target.path}</small></div>
+                <span className={'badge ' + (verified ? 'verified' : '')}>{verified ? <ShieldCheck size={12} /> : <Shield size={12} />}{verified ? 'Через VPN' : target.enabled ? 'Не подтверждено' : 'Выключено'}</span>
+                {targetActions(target)}
+              </li>
+            })}
+          </ul>
+          {!targets.length && <p className="empty">{view ? 'Добавьте EXE приложения, которое должно работать через VPN.' : 'Конфигурация пока недоступна.'}</p>}
+        </section>
+        <div className="main-actions">
+          <button className="button primary" disabled={!canInstall} onClick={install}><Download size={16} />Установить правила</button>
+          <button className="button" disabled={!available || (status === 'disabled' && !view?.objectsPresent)} onClick={remove}><Trash2 size={16} />Удалить правила</button>
+          <button className="button secondary" disabled={busy || view?.busy} onClick={() => update(api.refresh)}><RefreshCw size={16} />Обновить статус</button>
         </div>
         <section className="panel dashboard-log">
           <PanelTitle icon={<FileText size={17} />} action={<button className="text-button" onClick={() => navigate('journal')}>Показать всё</button>}>Журнал событий</PanelTitle>
@@ -343,17 +385,20 @@ function App() {
             <button className="button" disabled={!available || (status === 'disabled' && !view?.objectsPresent)} onClick={remove}><Trash2 size={16} />Удалить правила</button>
             <button className="button secondary" disabled={busy} onClick={() => update(api.refresh)}><RefreshCw size={16} />Обновить статус</button>
           </div>
-          {view?.rawStatus && <details><summary>Подробный статус WFP</summary><pre>{view.rawStatus}</pre></details>}
+          {view?.rawStatus && <WfpStatus raw={view.rawStatus} />}
         </section>}
         {route === 'diagnostics' && <section className="panel content-panel">
-          <PanelTitle icon={<Activity size={18} />}>{statusTitle}</PanelTitle>
+          <PanelTitle icon={<Activity size={18} />} action={<button className="button compact" disabled={!available || !view?.diagnostic} onClick={copyDiagnostic}><ClipboardCopy size={14} />Копировать</button>}>{statusTitle}</PanelTitle>
           <p>{view?.reason || statusDetail}</p>
           <div className="flex flex-wrap gap-2">
-            <button className="button secondary" disabled={busy} onClick={() => update(api.refresh)}><RefreshCw size={16} />Обновить диагностику</button>
-            <button className="button" disabled={!available} onClick={inspectPlan}><FileSearch size={16} />Проверить план</button>
-            <button className="button" disabled={!available} onClick={canary}><FlaskConical size={16} />Запустить тест Canary</button>
+            <button className="button secondary" disabled={busy} onClick={() => { setDiagnosticCopied(false); update(api.refresh) }}><RefreshCw size={16} />Обновить диагностику</button>
+            <button className="button" disabled={!available} onClick={inspectPlan}><FileSearch size={16} />Что изменится в WFP</button>
+            <button className="button" disabled={!available} onClick={canary}><FlaskConical size={16} />Проверить запись в WFP</button>
           </div>
-          {view?.diagnostic && <pre>{view.diagnostic}</pre>}
+          {diagnosticCopied && <p role="status" className="success">Диагностика скопирована в буфер обмена.</p>}
+          <div className="selectable-output" data-selectable-region tabIndex={0}>
+            {view?.diagnostic ? <pre>{view.diagnostic}</pre> : <p className="empty">Диагностика пока пуста.</p>}
+          </div>
         </section>}
         {route === 'journal' && <section className="panel content-panel">
           <PanelTitle icon={<FileText size={18} />} action={<div className="flex flex-wrap gap-2">
@@ -361,7 +406,7 @@ function App() {
             <button className="button compact" disabled={!available || !events.length} onClick={() => { setJournalCopied(false); update(api.clearEvents) }}><Trash2 size={14} />Очистить</button>
           </div>}>Журнал событий</PanelTitle>
           {journalCopied && <p role="status" className="success">Журнал скопирован в буфер обмена.</p>}
-          <EventList events={events} />
+          <div className="selectable-output" data-selectable-region tabIndex={0}><EventList events={events} /></div>
         </section>}
         {route === 'about' && <section className="panel content-panel">
           <PanelTitle icon={<ShieldCheck size={18} />}>VPN Kill Switch</PanelTitle>
@@ -374,7 +419,10 @@ function App() {
       dismiss()
       if (!confirmation.run) return
       setChangesFilters(Boolean(confirmation.changesFilters))
-      void perform(confirmation.run, setView).finally(() => setChangesFilters(false))
+      void perform(confirmation.run, result => {
+        setView(result)
+        confirmation.onSuccess?.(result)
+      }, confirmation.onFailure).finally(() => setChangesFilters(false))
     }} />}
   </div>
 }

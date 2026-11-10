@@ -1,5 +1,6 @@
 /temp/
 /dist/
+/logs/
 /frontend/node_modules/
 /frontend/dist/
 /cmd/guard-desktop/*_windows_amd64.syso

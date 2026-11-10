@@ -41,6 +41,7 @@ func (s *Service) refresh(ctx context.Context, operationID string) error {
 	adapters = ui.FilterAdapters(adapters, settings.NetworkAdapterTypes, settings.VPNInterfaceGUID)
 	status, reason := "unknown", "Обнаруженные правила не подтверждены."
 	paths := []string{}
+	installedPaths := []string{}
 	var count int
 	var present bool
 	var verifyErr error
@@ -57,6 +58,14 @@ func (s *Service) refresh(ctx context.Context, operationID string) error {
 		}
 		count = len(snapshot.Filters)
 		present = count > 0 || snapshot.Provider.Present || snapshot.Sublayer.Present
+		seenInstalled := map[string]bool{}
+		for _, filter := range snapshot.Filters {
+			key := strings.ToLower(filter.Application)
+			if key != "" && !seenInstalled[key] {
+				seenInstalled[key] = true
+				installedPaths = append(installedPaths, filter.Application)
+			}
+		}
 		switch {
 		case snapshot.Provider.Disabled || snapshot.Sublayer.Disabled:
 			reason = "Провайдер или подслой WFP отключён."
@@ -79,6 +88,7 @@ func (s *Service) refresh(ctx context.Context, operationID string) error {
 	s.view.Status, s.view.Reason = status, reason
 	s.view.FilterCount, s.view.ObjectsPresent = count, present
 	s.view.VerifiedPaths = paths
+	s.view.InstalledPaths = installedPaths
 	s.view.VerifiedTargetIDs = []string{}
 	if status == "active" {
 		s.view.ConfigDirty = false

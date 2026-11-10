@@ -72,8 +72,8 @@ func (s *Service) RemoveTarget(id string, confirmed bool) (View, error) {
 			return errors.New("Подтвердите удаление приложения.")
 		}
 		next := s.Snapshot().Settings
-		if !strings.HasPrefix(id, "custom-") {
-			return errors.New("Встроенную запись удалить нельзя.")
+		if id == "probe" {
+			return errors.New("Служебную запись probe удалить нельзя.")
 		}
 		index := slices.IndexFunc(next.Targets, func(target ui.Target) bool { return target.ID == id })
 		if index < 0 {

@@ -234,3 +234,59 @@ func TestServiceRefreshFiltersAdapters(t *testing.T) {
 		t.Fatalf("adapters=%+v err=%v", view.Adapters, err)
 	}
 }
+
+func TestServiceRemovesLegacyAndCustomTargets(t *testing.T) {
+	service := newTestService(t, nil)
+	service.view.Settings.Targets = append(service.view.Settings.Targets,
+		ui.Target{ID: "claude", Path: `C:\Apps\Claude.exe`, Enabled: false},
+		ui.Target{ID: "custom-codex-cli", Path: `C:\Apps\codex.exe`, Enabled: false},
+	)
+	for _, id := range []string{"claude", "custom-codex-cli"} {
+		view, err := service.RemoveTarget(id, true)
+		if err != nil || view.Settings.Target(id) != nil {
+			t.Fatalf("remove %s: view=%+v err=%v", id, view.Settings.Targets, err)
+		}
+	}
+	settings := service.Snapshot().Settings
+	if len(settings.Targets) != 1 || settings.Target("probe") == nil {
+		t.Fatalf("probe was removed: %+v", settings.Targets)
+	}
+}
+
+func TestServiceReportsInstalledApplicationsAfterSettingsChange(t *testing.T) {
+	snapshot := wfp.Snapshot{
+		Provider: wfp.ObjectState{Present: true},
+		Sublayer: wfp.ObjectState{Present: true},
+		Filters: []wfp.FilterState{
+			{Application: `C:\Apps\one.exe`},
+			{Application: `C:\Apps\one.exe`},
+			{Application: `D:\Apps\two.exe`},
+		},
+	}
+	raw, err := json.Marshal(map[string]any{"state": "unknown", "wfp": snapshot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := newTestService(t, func(_ context.Context, args ...string) ([]byte, error) {
+		switch args[0] {
+		case "status":
+			return raw, nil
+		case "diagnose":
+			return []byte(`{"adapters":[]}`), nil
+		case "install":
+			return nil, errors.New("installed rules differ")
+		default:
+			t.Fatalf("unexpected guard call: %v", args)
+			return nil, nil
+		}
+	})
+	view, err := service.Refresh()
+	want := []string{`C:\Apps\one.exe`, `D:\Apps\two.exe`}
+	if err != nil || !slices.Equal(view.InstalledPaths, want) {
+		t.Fatalf("installed paths=%v error=%v", view.InstalledPaths, err)
+	}
+	view, err = service.SetTarget("probe", false, true)
+	if err != nil || !view.ConfigDirty || !slices.Equal(view.InstalledPaths, want) {
+		t.Fatalf("dirty=%v installed paths=%v error=%v", view.ConfigDirty, view.InstalledPaths, err)
+	}
+}

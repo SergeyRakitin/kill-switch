@@ -33,8 +33,6 @@ func DefaultSettings(exeDir string) Settings {
 		NetworkAdapterTypes: DefaultNetworkAdapterTypes(),
 		Targets: []Target{
 			{ID: "probe", Path: "guard-probe.exe", Enabled: true},
-			{ID: "claude", Path: "Z", Enabled: false},
-			{ID: "codex", Path: "Z", Enabled: false},
 		},
 	}
 }
@@ -64,9 +62,10 @@ func LoadOrCreateSettings(exeDir string) (Settings, error) {
 		s.NetworkAdapterTypes = DefaultNetworkAdapterTypes()
 		changed = true
 	}
-	for i := range s.Targets {
-		if (s.Targets[i].ID == "claude" || s.Targets[i].ID == "codex") && s.Targets[i].Path == "" {
-			s.Targets[i].Path = "Z"
+	for i := len(s.Targets) - 1; i >= 0; i-- {
+		target := s.Targets[i]
+		if (target.ID == "claude" || target.ID == "codex") && !target.Enabled && (target.Path == "" || target.Path == "Z") {
+			s.Targets = append(s.Targets[:i], s.Targets[i+1:]...)
 			changed = true
 		}
 	}
@@ -98,10 +97,8 @@ func (s Settings) Validate() error {
 			return fmt.Errorf("неизвестный тип приложения %q", t.ID)
 		}
 	}
-	for _, id := range []string{"probe", "claude", "codex"} {
-		if !seen[id] {
-			return fmt.Errorf("отсутствует обязательная запись %s", id)
-		}
+	if !seen["probe"] {
+		return errors.New("отсутствует служебная запись probe")
 	}
 	return nil
 }

@@ -35,6 +35,7 @@ type View struct {
 	VPNStatus         string      `json:"vpnStatus"`
 	VerifiedPaths     []string    `json:"verifiedPaths"`
 	VerifiedTargetIDs []string    `json:"verifiedTargetIds"`
+	InstalledPaths    []string    `json:"installedPaths"`
 	FilterCount       int         `json:"filterCount"`
 	ObjectsPresent    bool        `json:"objectsPresent"`
 	ConfigDirty       bool        `json:"configDirty"`
@@ -82,7 +83,7 @@ func New(exeDir string) (*Service, error) {
 		exeDir: exeDir,
 		client: ui.New(filepath.Join(exeDir, "guard.exe")),
 		view: View{
-			Settings: settings, Adapters: []Adapter{}, VerifiedPaths: []string{}, VerifiedTargetIDs: []string{}, Events: []Event{},
+			Settings: settings, Adapters: []Adapter{}, VerifiedPaths: []string{}, VerifiedTargetIDs: []string{}, InstalledPaths: []string{}, Events: []Event{},
 			Status: "unknown", Reason: "Состояние WFP ещё не прочитано.", VPNStatus: "unknown",
 		},
 	}, nil
@@ -124,6 +125,7 @@ func (s *Service) snapshotLocked() View {
 	view.Adapters = slices.Clone(view.Adapters)
 	view.VerifiedPaths = slices.Clone(view.VerifiedPaths)
 	view.VerifiedTargetIDs = slices.Clone(view.VerifiedTargetIDs)
+	view.InstalledPaths = slices.Clone(view.InstalledPaths)
 	view.Events = slices.Clone(view.Events)
 	return view
 }
@@ -283,9 +285,9 @@ func (s *Service) Remove(confirmed bool) (View, error) {
 func (s *Service) Canary(confirmed bool) (View, error) {
 	return s.withView(func() error {
 		if !confirmed {
-			return errors.New("Подтвердите запуск теста восстановления.")
+			return errors.New("Подтвердите проверку записи в WFP.")
 		}
-		return s.mutate("Тест восстановления", func(ctx context.Context, operationID string) (string, error) {
+		return s.mutate("Проверка записи WFP", func(ctx context.Context, operationID string) (string, error) {
 			raw, err := s.client.CanaryAsync(ctx, operationID)
 			if err != nil {
 				return raw, err

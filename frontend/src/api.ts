@@ -12,6 +12,7 @@ export type View = {
   vpnStatus: 'connected' | 'disconnected' | 'unknown'
   verifiedPaths: string[] | null
   verifiedTargetIds: string[] | null
+  installedPaths: string[] | null
   filterCount: number
   objectsPresent: boolean
   configDirty: boolean

@@ -120,6 +120,7 @@ type ObjectState struct {
 }
 type FilterState struct {
 	Key            string           `json:"key"`
+	Application    string           `json:"application,omitempty"`
 	Flags          uint32           `json:"flags"`
 	Layer          string           `json:"layer"`
 	Action         uint32           `json:"action"`
@@ -225,7 +226,9 @@ func (e *Engine) listOwnFilters() ([]FilterState, error) {
 			if !providerMatch && !subMatch {
 				continue
 			}
-			if !providerMatch || !subMatch || !strings.HasPrefix(utf16String(f.Display.Name), "KS guard v1") || !validOwnedFilter(f) {
+			name := utf16String(f.Display.Name)
+			application, applicationOK := filterApplication(name, f.Action.Type)
+			if !providerMatch || !subMatch || !strings.HasPrefix(name, "KS guard v1") || !applicationOK || !validOwnedFilter(f) {
 				free(&array)
 				return nil, fmt.Errorf("foreign or malformed filter in owned namespace: %s", f.Key.String())
 			}
@@ -241,7 +244,7 @@ func (e *Engine) listOwnFilters() ([]FilterState, error) {
 				free(&array)
 				return nil, err
 			}
-			result = append(result, FilterState{Key: f.Key.String(), Flags: f.Flags, Layer: layerName(f.Layer), Action: f.Action.Type, Weight: weight, Persistent: f.Flags&persistent != 0, Disabled: f.Flags&disabled != 0, ConditionCount: f.ConditionCount, Conditions: observed})
+			result = append(result, FilterState{Key: f.Key.String(), Application: application, Flags: f.Flags, Layer: layerName(f.Layer), Action: f.Action.Type, Weight: weight, Persistent: f.Flags&persistent != 0, Disabled: f.Flags&disabled != 0, ConditionCount: f.ConditionCount, Conditions: observed})
 		}
 		free(&array)
 		if count < 100 {
@@ -250,6 +253,23 @@ func (e *Engine) listOwnFilters() ([]FilterState, error) {
 	}
 	runtime.KeepAlive(e)
 	return result, nil
+}
+
+func filterApplication(name string, actionType uint32) (string, bool) {
+	prefix := "KS guard v1 "
+	switch actionType {
+	case actionBlock:
+		prefix += "BLOCK "
+	case actionPermit:
+		prefix += "PERMIT_SOFT "
+	default:
+		return "", false
+	}
+	application, ok := strings.CutPrefix(name, prefix)
+	if !ok || application == "" {
+		return "", false
+	}
+	return application, true
 }
 
 func validOwnedFilter(f *filter) bool {
