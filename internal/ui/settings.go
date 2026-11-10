@@ -225,6 +225,25 @@ func (t TargetSet) MissingApps() []string {
 	return missing
 }
 
+// MissingTargetIDs возвращает id записей «по точному пути», файла которых нет на диске,
+// включая выключенные: GUI помечает их, чтобы запись удалили или выбрали EXE заново.
+func (s Settings) MissingTargetIDs(exeDir string) []string {
+	ids := []string{}
+	for _, t := range s.Targets {
+		if t.Kind() != TargetTypeEXE || t.Path == "" || t.Path == "Z" {
+			continue
+		}
+		p := t.Path
+		if !filepath.IsAbs(p) {
+			p = filepath.Join(exeDir, p)
+		}
+		if _, err := os.Stat(p); errors.Is(err, fs.ErrNotExist) {
+			ids = append(ids, t.ID)
+		}
+	}
+	return ids
+}
+
 func (s Settings) ActiveTargets(exeDir string) (TargetSet, error) {
 	set := TargetSet{Apps: []string{}, PackageFamilies: []string{}, FileNames: []string{}}
 	seen := map[string]bool{}

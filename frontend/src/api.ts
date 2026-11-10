@@ -14,6 +14,7 @@ export type View = {
   verifiedPaths: string[] | null
   verifiedTargetIds: string[] | null
   installedPaths: string[] | null
+  missingTargetIds: string[] | null
   filterCount: number
   objectsPresent: boolean
   configDirty: boolean

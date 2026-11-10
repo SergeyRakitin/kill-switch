@@ -362,6 +362,43 @@ func TestServicePreviewExplainsMissingExe(t *testing.T) {
 	}
 }
 
+func TestServiceMarksMissingTargets(t *testing.T) {
+	snapshot := wfp.Snapshot{
+		Provider: wfp.ObjectState{Present: true, Persistent: true},
+		Sublayer: wfp.ObjectState{Present: true, Persistent: true},
+		Filters:  []wfp.FilterState{{Key: "installed-filter", Application: `C:\Old\cowork-svc.exe`}},
+	}
+	raw, err := json.Marshal(map[string]any{"state": "unknown", "wfp": snapshot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := newTestService(t, func(_ context.Context, args ...string) ([]byte, error) {
+		switch args[0] {
+		case "status":
+			return raw, nil
+		case "diagnose":
+			return []byte(`{"adapters":[]}`), nil
+		}
+		t.Fatalf("plan requested despite a missing EXE: %v", args)
+		return nil, nil
+	})
+	gone := filepath.Join(service.exeDir, "Claude_4.23118.1.0_x64", "cowork-svc.exe")
+	service.view.Settings.Targets = append(service.view.Settings.Targets, ui.Target{ID: "custom-claude-cowork", Path: gone, Enabled: true})
+	view, err := service.Refresh()
+	if err != nil || !slices.Equal(view.MissingTargetIDs, []string{"custom-claude-cowork"}) || view.Status != "unknown" || view.Reason != missingTargetsReason {
+		t.Fatalf("status=%q reason=%q missing=%v error=%v", view.Status, view.Reason, view.MissingTargetIDs, err)
+	}
+	for _, event := range view.Events {
+		if event.Level == "warning" {
+			t.Fatalf("missing EXE produced a journal warning on refresh: %s", event.Message)
+		}
+	}
+	view, err = service.RemoveTarget("custom-claude-cowork", true)
+	if err != nil || len(view.MissingTargetIDs) != 0 {
+		t.Fatalf("missing=%v error=%v", view.MissingTargetIDs, err)
+	}
+}
+
 func TestServicePreviewPassesNameTargets(t *testing.T) {
 	var preview []string
 	service := newTestService(t, func(_ context.Context, args ...string) ([]byte, error) {

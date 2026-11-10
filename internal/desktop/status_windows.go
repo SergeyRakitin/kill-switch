@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"kill-switch/internal/policy"
@@ -16,8 +17,21 @@ func (s *Service) Refresh() (View, error) {
 	return s.withView(func() error { return s.refresh(context.Background(), "") })
 }
 
+const missingTargetsReason = "Файлы некоторых записей «EXE по точному пути» не найдены. Удалите или выключите эти записи либо выберите EXE заново, затем установите правила."
+
+// hasEnabledMissing сообщает, есть ли среди включённых записей та, чьего файла нет на диске.
+func hasEnabledMissing(settings ui.Settings, missing []string) bool {
+	for _, target := range settings.Targets {
+		if target.Enabled && slices.Contains(missing, target.ID) {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Service) refresh(ctx context.Context, operationID string) error {
 	settings := s.Snapshot().Settings
+	missing := settings.MissingTargetIDs(s.exeDir)
 	raw, readErr := s.client.StatusAsync(ctx, operationID)
 	var observed struct {
 		State string `json:"state"`
@@ -78,6 +92,9 @@ func (s *Service) refresh(ctx context.Context, operationID string) error {
 			reason = "Провайдер или подслой WFP отключён."
 		case count == 0 && observed.State == "disabled":
 			status, reason = "disabled", "Собственные фильтры не установлены."
+		case count > 0 && hasEnabledMissing(settings, missing):
+			// План для таких настроек не строится; без сверки обходимся без предупреждения в журнале на каждом обновлении.
+			reason = missingTargetsReason
 		case count > 0:
 			paths, verifyErr = s.verifyPaths(ctx, settings, snapshot)
 			if verifyErr == nil {
@@ -96,6 +113,7 @@ func (s *Service) refresh(ctx context.Context, operationID string) error {
 	s.view.FilterCount, s.view.ObjectsPresent = count, present
 	s.view.VerifiedPaths = paths
 	s.view.InstalledPaths = installedPaths
+	s.view.MissingTargetIDs = missing
 	s.view.VerifiedTargetIDs = []string{}
 	if status == "active" {
 		s.view.ConfigDirty = false

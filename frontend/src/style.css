@@ -89,6 +89,7 @@ small { color: var(--muted); }
 .app-copy small { font-size: 10px; margin-top: 1px; }
 .badge { display: flex; align-items: center; gap: 4px; padding: 3px 5px; border-radius: 12px; font-size: 10px; color: #bac7d8; background: #23303f; flex: none; }
 .badge.verified { color: #81f0ac; background: #1a3c32; }
+.badge.missing { color: var(--error); background: #311e2a; }
 .switch { position: relative; width: 33px; height: 18px; border-radius: 14px; background: #46576a; flex: none; }
 .switch span { position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #f4f8ff; box-shadow: 0 1px 2px #0005; }
 .switch[aria-checked=true] { background: #159a49; }

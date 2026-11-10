@@ -36,6 +36,7 @@ type View struct {
 	VerifiedPaths     []string    `json:"verifiedPaths"`
 	VerifiedTargetIDs []string    `json:"verifiedTargetIds"`
 	InstalledPaths    []string    `json:"installedPaths"`
+	MissingTargetIDs  []string    `json:"missingTargetIds"`
 	FilterCount       int         `json:"filterCount"`
 	ObjectsPresent    bool        `json:"objectsPresent"`
 	ConfigDirty       bool        `json:"configDirty"`
@@ -83,7 +84,7 @@ func New(exeDir string) (*Service, error) {
 		exeDir: exeDir,
 		client: ui.New(filepath.Join(exeDir, "guard.exe")),
 		view: View{
-			Settings: settings, Adapters: []Adapter{}, VerifiedPaths: []string{}, VerifiedTargetIDs: []string{}, InstalledPaths: []string{}, Events: []Event{},
+			Settings: settings, Adapters: []Adapter{}, VerifiedPaths: []string{}, VerifiedTargetIDs: []string{}, InstalledPaths: []string{}, Events: []Event{}, MissingTargetIDs: settings.MissingTargetIDs(exeDir),
 			Status: "unknown", Reason: "Состояние WFP ещё не прочитано.", VPNStatus: "unknown",
 		},
 	}, nil
@@ -126,6 +127,7 @@ func (s *Service) snapshotLocked() View {
 	view.VerifiedPaths = slices.Clone(view.VerifiedPaths)
 	view.VerifiedTargetIDs = slices.Clone(view.VerifiedTargetIDs)
 	view.InstalledPaths = slices.Clone(view.InstalledPaths)
+	view.MissingTargetIDs = slices.Clone(view.MissingTargetIDs)
 	view.Events = slices.Clone(view.Events)
 	return view
 }

@@ -161,9 +161,11 @@ func (s *Service) saveSettings(next ui.Settings) error {
 	if err := ui.SaveSettings(filepath.Join(s.exeDir, ui.SettingsFile), next); err != nil {
 		return fmt.Errorf("Не удалось сохранить настройки: %w", err)
 	}
+	missing := next.MissingTargetIDs(s.exeDir)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.view.Settings = next
+	s.view.MissingTargetIDs = missing
 	s.revision++
 	s.reviewed = reviewedPlan{}
 	s.view.ConfigDirty = true

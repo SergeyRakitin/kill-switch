@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Activity, AppWindow, Check, CircleAlert, CircleHelp, Code2, Sparkles, ClipboardCopy, Download, EllipsisVertical, FileSearch, FileText, FlaskConical, House, Info, LayoutGrid, Monitor, Plus, RefreshCw, Settings, Shield, ShieldCheck, Terminal, Trash2, X } from 'lucide-react'
+import { Activity, AppWindow, Check, CircleAlert, CircleHelp, Code2, Sparkles, ClipboardCopy, Download, EllipsisVertical, FileSearch, FileText, FlaskConical, House, Info, LayoutGrid, Monitor, Plus, RefreshCw, Settings, Shield, ShieldCheck, Terminal, Trash2, TriangleAlert, X } from 'lucide-react'
 import { Clipboard } from '@wailsio/runtime'
 import { api, type Event, type Package, type Preview, type Target, type View } from './api'
 import { WfpStatus } from './WfpStatus'
@@ -291,7 +291,11 @@ function App() {
   const installedPaths = view?.installedPaths ?? []
   const installedSummary = installedPaths.length ? installedPaths.map(path => filename(describeTarget(path))).join(', ') :
     status === 'disabled' ? 'Нет установленных правил' : 'Список не подтверждён'
-  const canInstall = available && !(status === 'active' && !view?.configDirty)
+  const missingIds = view?.missingTargetIds ?? []
+  const isMissing = (target: Target) => missingIds.includes(target.id)
+  // Включённая запись с пропавшим файлом не даёт построить план: установку блокируем, пока запись не исправят.
+  const blockedByMissing = targets.some(target => target.enabled && isMissing(target))
+  const canInstall = available && !blockedByMissing && !(status === 'active' && !view?.configDirty)
   const filterSummary = status === 'error' ? 'Ошибка чтения' : status === 'unknown' ? 'Не проверено' :
     view?.objectsPresent ? `Фильтров: ${view.filterCount}` : 'Объекты не обнаружены'
   const errorText = error || view?.error
@@ -431,7 +435,9 @@ function App() {
     return <li key={target.id}>
       <span className={'app-icon ' + (executable === 'claude.exe' ? 'claude' : executable === 'codex.exe' ? 'codex' : target.id)}><Glyph size={18} /></span>
       <div className="app-copy"><strong>{targetName(target)}</strong><small title={target.path === 'Z' ? undefined : target.path}>{target.path === 'Z' ? 'Путь к EXE не выбран' : target.type === 'name' ? 'В любой папке' : target.path}</small></div>
-      <span className={'badge ' + (verified ? 'verified' : '')}>{verified ? <ShieldCheck size={12} /> : <Shield size={12} />}{verified ? 'Через VPN' : target.enabled ? 'Не подтверждено' : 'Выключено'}</span>
+      {isMissing(target) ?
+        <span className="badge missing" title="Файла по этому пути нет: удалите запись или выберите EXE заново"><TriangleAlert size={12} />Файл не найден</span> :
+        <span className={'badge ' + (verified ? 'verified' : '')}>{verified ? <ShieldCheck size={12} /> : <Shield size={12} />}{verified ? 'Через VPN' : target.enabled ? 'Не подтверждено' : 'Выключено'}</span>}
       {targetActions(target)}
     </li>
   }
@@ -454,7 +460,7 @@ function App() {
         <section className={'hero ' + statusClass}>
           <ShieldCheck className="hero-icon" size={48} strokeWidth={1.65} />
           <div><h1>{changesFilters ? 'Выполняется операция' : statusTitle}</h1><p>{!view && !busy ? 'Состояние защиты доступно в настольном приложении.' : statusDetail}</p></div>
-          <Switch checked={status === 'active'} label="Правила WFP установлены" disabled={!available} onChange={status === 'active' ? remove : install} />
+          <Switch checked={status === 'active'} label="Правила WFP установлены" disabled={!available || (status !== 'active' && blockedByMissing)} onChange={status === 'active' ? remove : install} />
         </section>
         <section className="panel status-panel">
           <PanelTitle>Состояние</PanelTitle>
@@ -463,7 +469,8 @@ function App() {
             <li><span className={'status-icon ' + (view?.vpnStatus === 'connected' ? 'good' : '')}>{view?.vpnStatus === 'connected' ? <Check size={15} /> : <CircleHelp size={15} />}</span><div><strong>VPN-интерфейс</strong><small>{vpnName} · {vpnStatus}</small></div></li>
             <li><span className={'status-icon ' + (installedPaths.length ? 'good' : '')}>{installedPaths.length ? <Check size={15} /> : <CircleHelp size={15} />}</span><div><strong>Правила установлены для приложений</strong><small title={installedPaths.join('\n')}>{installedSummary}</small></div></li>
           </ul>
-          {view?.configDirty && <p className="warning pending-changes">Есть изменения, установите новые правила.</p>}
+          {view?.configDirty && !blockedByMissing && <p className="warning pending-changes">Есть изменения, установите новые правила.</p>}
+          {blockedByMissing && <p className="warning pending-changes">Установка правил недоступна: файлы некоторых записей «EXE по точному пути» не найдены. Удалите или выключите эти записи либо выберите EXE заново.</p>}
         </section>
         <section className="panel apps">
           <PanelTitle icon={<LayoutGrid size={17} />} action={<button className="button primary compact" disabled={!available} onClick={addName}><Plus size={15} />Добавить по имени</button>}>

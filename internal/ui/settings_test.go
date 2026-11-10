@@ -140,6 +140,27 @@ func TestMissingApps(t *testing.T) {
 	}
 }
 
+func TestMissingTargetIDs(t *testing.T) {
+	dir := t.TempDir()
+	present := filepath.Join(dir, "present.exe")
+	for _, file := range []string{present, filepath.Join(dir, "guard-probe.exe")} {
+		if err := os.WriteFile(file, []byte("exe"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := DefaultSettings(dir)
+	s.Targets = append(s.Targets,
+		Target{ID: "custom-present", Path: present, Enabled: true},
+		Target{ID: "custom-gone", Path: filepath.Join(dir, "old", "cowork-svc.exe"), Enabled: true},
+		Target{ID: "custom-gone-off", Path: filepath.Join(dir, "old", "tool.exe"), Enabled: false},
+		Target{ID: "custom-name", Type: TargetTypeName, Path: "cowork-svc.exe", Enabled: true},
+		Target{ID: "custom-msix", Type: TargetTypeMSIX, Path: "Microsoft.WindowsCalculator_8wekyb3d8bbwe", Enabled: true},
+	)
+	if got := s.MissingTargetIDs(dir); !reflect.DeepEqual(got, []string{"custom-gone", "custom-gone-off"}) {
+		t.Fatalf("missing=%v", got)
+	}
+}
+
 func TestNameTargets(t *testing.T) {
 	dir := t.TempDir()
 	s := DefaultSettings(dir)
