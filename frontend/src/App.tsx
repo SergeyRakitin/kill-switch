@@ -69,6 +69,18 @@ function PanelTitle({ icon, children, action }: { icon?: ReactNode; children: Re
   return <header className="panel-title"><h2>{icon}{children}</h2>{action}</header>
 }
 
+// Какие фильтры WFP создаёт каждый способ указать приложение; показывается подсказкой у заголовка списка.
+const filterSet = 'Фильтры на каждую запись: разрешение исходящих через VPN, блокировка остальных исходящих и всех входящих (IPv4 и IPv6).'
+const ruleHints = {
+  name: `Условие WFP: путь приложения оканчивается на \\имя.exe (ALE_APP_ID, сравнение конца пути).\n${filterSet}`,
+  path: `Условие WFP: полный путь приложения совпадает с выбранным файлом (ALE_APP_ID, точное сравнение).\n${filterSet}`,
+  msix: `Условие WFP: SID контейнера приложения (ALE_PACKAGE_ID). Срабатывает только в песочнице AppContainer.\n${filterSet}`,
+}
+
+function Hint({ text }: { text: string }) {
+  return <span className="hint" tabIndex={0} role="note" aria-label={text} data-tip={text}><CircleHelp size={15} /></span>
+}
+
 function EventList({ events, compact = false }: { events: Event[]; compact?: boolean }) {
   return events.length ? <ul className="event-list">
     {events.map((event, index) => {
@@ -455,26 +467,27 @@ function App() {
         </section>
         <section className="panel apps">
           <PanelTitle icon={<LayoutGrid size={17} />} action={<button className="button primary compact" disabled={!available} onClick={addName}><Plus size={15} />Добавить по имени</button>}>
-            EXE по имени <span className="counter">{nameTargets.length}</span>
+            EXE по имени (любая папка) <span className="counter">{nameTargets.length}</span><Hint text={ruleHints.name} />
           </PanelTitle>
-          <p>Правило совпадает с EXE с этим именем в любой папке и не зависит от номера версии в пути. Подходит для Claude Desktop и Claude Code.</p>
+          <p>Правила применяются ко всем Exe-файлам с указанным именем вне зависимости от местоположения. Подходит для приложений, которые при обновлении устанавливаются по новому пути, например, Claude Desktop.</p>
           <ul className="app-list">{nameTargets.map(renderTarget)}</ul>
           {!nameTargets.length && <p className="empty">Добавьте имя EXE, например claude.exe.</p>}
         </section>
         <section className="panel apps">
-          <PanelTitle icon={<LayoutGrid size={17} />} action={<button className="button primary compact" disabled={!available} onClick={addPackage}><Plus size={15} />Добавить MSIX</button>}>
-            Windows App (MSIX) <span className="counter">{msixTargets.length}</span>
-          </PanelTitle>
-          <p>Правило по пакету действует только на приложения в изолированной песочнице Windows (AppContainer). Claude Desktop работает без неё: добавьте его по имени EXE.</p>
-          <ul className="app-list">{msixTargets.map(renderTarget)}</ul>
-          {!msixTargets.length && <p className="empty">Добавьте Windows App, которое должно работать только через VPN.</p>}
-        </section>
-        <section className="panel apps">
           <PanelTitle icon={<LayoutGrid size={17} />} action={<button className="button primary compact" disabled={!available} onClick={() => update(() => api.browseTarget(''))}><Plus size={15} />Добавить EXE</button>}>
-            Исполняемые файлы (EXE) <span className="counter">{exeTargets.length}</span>
+            EXE по точному пути <span className="counter">{exeTargets.length}</span><Hint text={ruleHints.path} />
           </PanelTitle>
+          <p>Правила применяются к Exe-файлам с указанным точным расположением.</p>
           <ul className="app-list">{exeTargets.map(renderTarget)}</ul>
           {!exeTargets.length && <p className="empty">{view ? 'Добавьте EXE приложения, которое должно работать через VPN.' : 'Конфигурация пока недоступна.'}</p>}
+        </section>
+        <section className="panel apps">
+          <PanelTitle icon={<LayoutGrid size={17} />} action={<button className="button primary compact" disabled={!available} onClick={addPackage}><Plus size={15} />Добавить MSIX</button>}>
+            Пакеты MSIX (Windows App) <span className="counter">{msixTargets.length}</span><Hint text={ruleHints.msix} />
+          </PanelTitle>
+          <p>Правила применяются ко всем exe-файлам по имени пакета MSIX (Windows App из Microsoft Store), вне зависимости от имени и местоположения файла.</p>
+          <ul className="app-list">{msixTargets.map(renderTarget)}</ul>
+          {!msixTargets.length && <p className="empty">Добавьте Windows App, которое должно работать только через VPN.</p>}
         </section>
         <div className="main-actions">
           <button className="button primary" disabled={!canInstall} onClick={install}><Download size={16} />Установить правила</button>

@@ -68,6 +68,16 @@ small { color: var(--muted); }
 .panel-title h2 { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 650; }
 .panel-title h2 svg { color: #abc8e5; }
 .counter { padding: 1px 6px; border-radius: 5px; color: #c7d5e6; background: #263647; font-size: 11px; }
+.hint { position: relative; display: inline-grid; place-items: center; color: var(--muted); cursor: help; border-radius: 50%; }
+.panel-title h2 .hint svg { color: inherit; }
+.hint:hover, .hint:focus-visible { color: var(--blue); outline: none; }
+.hint::after {
+  content: attr(data-tip); position: absolute; left: -6px; top: calc(100% + 7px); z-index: 20; width: max-content; max-width: min(320px, 70vw);
+  padding: 7px 9px; border: 1px solid #3b536d; border-radius: 7px; color: #ced9e8; background: #0d1722; box-shadow: 0 8px 22px #0009;
+  font-size: 11px; font-weight: 400; line-height: 1.45; letter-spacing: normal; white-space: pre-line;
+  opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .12s;
+}
+.hint:hover::after, .hint:focus-visible::after { opacity: 1; visibility: visible; }
 .apps > header { border-bottom: 1px solid #223142; }
 .app-list { padding: 0 9px; }
 .app-list li { display: flex; align-items: center; gap: 7px; min-height: 41px; border-bottom: 1px solid #223142; }
