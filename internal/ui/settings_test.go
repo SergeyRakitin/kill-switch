@@ -99,3 +99,67 @@ func TestCodexAndClaudeCanBeEnabledThroughJSON(t *testing.T) {
 		}
 	}
 }
+
+func TestMSIXTargetsRemainBackwardCompatible(t *testing.T) {
+	dir := t.TempDir()
+	s := DefaultSettings(dir)
+	s.Targets = append(s.Targets,
+		Target{ID: "custom-claude-msix", Type: TargetTypeMSIX, Path: "Claude_pzs8sxrjxfjjc", Enabled: true},
+		Target{ID: "custom-codex-msix", Type: TargetTypeMSIX, Path: "OpenAI.Codex_2p2nqsd0c76g0", Enabled: true},
+	)
+	set, err := s.ActiveTargets(dir)
+	if err != nil || len(set.Apps) != 1 || len(set.PackageFamilies) != 2 || len(set.FileNames) != 0 {
+		t.Fatalf("targets=%+v error=%v", set, err)
+	}
+	if set.PackageFamilies[0] != "Claude_pzs8sxrjxfjjc" || set.PackageFamilies[1] != "OpenAI.Codex_2p2nqsd0c76g0" {
+		t.Fatalf("packages=%v", set.PackageFamilies)
+	}
+	if err := SaveSettings(filepath.Join(dir, SettingsFile), s); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := LoadOrCreateSettings(dir)
+	if err != nil || reloaded.Target("custom-claude-msix").Kind() != TargetTypeMSIX || reloaded.Target("probe").Kind() != TargetTypeEXE {
+		t.Fatalf("reload=%+v error=%v", reloaded.Targets, err)
+	}
+	s.Target("custom-claude-msix").Path = `C:\Program Files\WindowsApps\Claude_`
+	if err := s.Validate(); err == nil {
+		t.Fatal("folder path accepted as package family")
+	}
+}
+
+func TestNameTargets(t *testing.T) {
+	dir := t.TempDir()
+	s := DefaultSettings(dir)
+	s.Targets = append(s.Targets,
+		Target{ID: "custom-name-claude", Type: TargetTypeName, Path: "claude.exe", Enabled: true},
+		Target{ID: "custom-name-cowork", Type: TargetTypeName, Path: "cowork-svc.exe", Enabled: true},
+		Target{ID: "custom-name-off", Type: TargetTypeName, Path: "codex.exe", Enabled: false},
+	)
+	set, err := s.ActiveTargets(dir)
+	if err != nil || len(set.Apps) != 1 || len(set.PackageFamilies) != 0 || !reflect.DeepEqual(set.FileNames, []string{"claude.exe", "cowork-svc.exe"}) {
+		t.Fatalf("targets=%+v error=%v", set, err)
+	}
+	if got := set.Display(); !reflect.DeepEqual(got, []string{filepath.Join(dir, "guard-probe.exe"), "name:claude.exe", "name:cowork-svc.exe"}) {
+		t.Fatalf("display=%v", got)
+	}
+	if set.Count() != 3 || !set.Equal(set.Clone()) {
+		t.Fatalf("count=%d", set.Count())
+	}
+	if err := SaveSettings(filepath.Join(dir, SettingsFile), s); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := LoadOrCreateSettings(dir)
+	if err != nil || reloaded.Target("custom-name-claude").Kind() != TargetTypeName {
+		t.Fatalf("reload=%+v error=%v", reloaded.Targets, err)
+	}
+	s.Target("custom-name-cowork").Path = "CLAUDE.EXE"
+	if _, err := s.ActiveTargets(dir); err == nil {
+		t.Fatal("duplicate file name accepted")
+	}
+	for _, invalid := range []string{`C:\Apps\claude.exe`, "*.exe", "claude"} {
+		s.Target("custom-name-cowork").Path = invalid
+		if err := s.Validate(); err == nil {
+			t.Fatalf("invalid file name accepted: %q", invalid)
+		}
+	}
+}

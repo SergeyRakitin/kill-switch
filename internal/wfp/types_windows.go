@@ -84,23 +84,26 @@ const (
 	uint32Type        = 3
 	uint64Type        = 4
 	byteBlobType      = 12
+	sidType           = 13
 	matchEqual        = 0
 	matchFlagsNoneSet = 8
+	matchSuffix       = 11 // FWP_MATCH_PREFIX: имя обманчиво, по документации Microsoft сравнивается КОНЕЦ значения
 	actionBlock       = 0x1001
 	actionPermit      = 0x1002
 	loopbackFlag      = 1
 )
 
 var (
-	providerKey   = mustGUID("ab5f47c1-3f3e-4ac3-83c0-c2ff7bb68cd8")
-	sublayerKey   = mustGUID("6a927b7c-36aa-4cf6-8b37-d29052998638")
-	fieldAppID    = mustGUID("d78e1e87-8644-4ea5-9437-d809ecefc971")
-	fieldNextHop  = mustGUID("93ae8f5b-7f6f-4719-98c8-14e97429ef04")
-	fieldFlags    = mustGUID("632ce23b-5167-435c-86d7-e903684aa80c")
-	layerConnect4 = mustGUID("c38d57d1-05a7-4c33-904f-7fbceee60e82")
-	layerConnect6 = mustGUID("4a72393b-319f-44bc-84c3-ba54dcb3b6b4")
-	layerRecv4    = mustGUID("e1cd9fe7-f4b5-4273-96c0-592e487b8650")
-	layerRecv6    = mustGUID("a3b42c97-9f04-4672-b87e-cee9c483257f")
+	providerKey    = mustGUID("ab5f47c1-3f3e-4ac3-83c0-c2ff7bb68cd8")
+	sublayerKey    = mustGUID("6a927b7c-36aa-4cf6-8b37-d29052998638")
+	fieldAppID     = mustGUID("d78e1e87-8644-4ea5-9437-d809ecefc971")
+	fieldPackageID = mustGUID("71bc78fa-f17c-4997-a602-6abb261f351c")
+	fieldNextHop   = mustGUID("93ae8f5b-7f6f-4719-98c8-14e97429ef04")
+	fieldFlags     = mustGUID("632ce23b-5167-435c-86d7-e903684aa80c")
+	layerConnect4  = mustGUID("c38d57d1-05a7-4c33-904f-7fbceee60e82")
+	layerConnect6  = mustGUID("4a72393b-319f-44bc-84c3-ba54dcb3b6b4")
+	layerRecv4     = mustGUID("e1cd9fe7-f4b5-4273-96c0-592e487b8650")
+	layerRecv6     = mustGUID("a3b42c97-9f04-4672-b87e-cee9c483257f")
 )
 
 func parseGUID(raw string) (guid, error) {

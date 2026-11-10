@@ -1,7 +1,8 @@
 import { Call } from '@wailsio/runtime'
 
-export type Target = { id: string; path: string; enabled: boolean }
+export type Target = { id: string; type?: 'exe' | 'msix' | 'name'; path: string; enabled: boolean }
 export type Adapter = { name: string; description: string; guid: string; status: string; luid: string }
+export type Package = { name: string; packageFamilyName: string; version: string; installLocation: string }
 export type Status = 'unknown' | 'active' | 'disabled' | 'error'
 export type Event = { time: string; level: 'info' | 'success' | 'warning' | 'error'; message: string }
 export type View = {
@@ -35,6 +36,9 @@ export const api = {
   canary: () => call<View>('Canary', true),
   setTarget: (id: string, enabled: boolean, confirmed: boolean) => call<View>('SetTarget', id, enabled, confirmed),
   browseTarget: (id: string) => call<View>('BrowseTarget', id),
+  addPackageTarget: (family: string) => call<View>('AddPackageTarget', family),
+  addNameTarget: (name: string) => call<View>('AddNameTarget', name),
+  listPackages: () => call<Package[]>('Packages'),
   removeTarget: (id: string) => call<View>('RemoveTarget', id, true),
   selectAdapter: (guid: string) => call<View>('SelectAdapter', guid),
   clearEvents: () => call<View>('ClearEvents'),

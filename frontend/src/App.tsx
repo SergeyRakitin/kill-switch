@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Activity, AppWindow, Check, CircleAlert, CircleHelp, Code2, Sparkles, ClipboardCopy, Download, EllipsisVertical, FileSearch, FileText, FlaskConical, House, Info, LayoutGrid, Monitor, Plus, RefreshCw, Settings, Shield, ShieldCheck, Terminal, Trash2, X } from 'lucide-react'
 import { Clipboard } from '@wailsio/runtime'
-import { api, type Event, type Preview, type Target, type View } from './api'
+import { api, type Event, type Package, type Preview, type Target, type View } from './api'
 import { WfpStatus } from './WfpStatus'
 import './style.css'
 
@@ -24,6 +24,10 @@ type Confirmation = {
   changesFilters?: boolean
   onSuccess?: (result: View) => void
   onFailure?: (message: string, result: View | null) => void
+  // Форма ввода: окно закрывается только после успеха, ошибки показываются в нём же.
+  inline?: boolean
+  // Проверка введённого до обращения к сервису; возвращает текст ошибки или пустую строку.
+  validate?: () => string
 }
 
 const states = {
@@ -34,8 +38,24 @@ const states = {
 }
 
 const filename = (path: string) => path.split(/[\\/]/).at(-1) || path
+// Сервис передаёт цели как путь EXE, msix:семейство или name:имя EXE.
+const describeTarget = (value: string) => value.startsWith('name:') ? `${value.slice(5)} — в любой папке` :
+  value.startsWith('msix:') ? `${value.slice(5)} — MSIX` : value
+// Те же правила, что у config.ValidFileName на стороне Go, но с понятным текстом для каждой ошибки.
+function fileNameProblem(raw: string) {
+  const name = raw.trim()
+  if (!name) return 'Введите имя EXE, например claude.exe.'
+  if (/[\\/:]/.test(name)) return 'Нужно только имя файла без папки: claude.exe, а не полный путь.'
+  if (/[*?<>"|]/.test(name)) return 'Маски и символы * ? < > " | в имени недопустимы.'
+  if (!/^[\x20-\x7e]+$/.test(name)) return 'Имя пишется латиницей: кириллица и другие не-ASCII символы не поддерживаются.'
+  if (!/\.exe$/i.test(name)) return 'Имя должно оканчиваться на .exe.'
+  if (/^[. ]*$/.test(name.slice(0, -4))) return 'Перед .exe должно быть имя файла.'
+  if (name.length > 255) return 'Имя длиннее 255 символов.'
+  return ''
+}
 const presetNames: Record<string, string> = { probe: 'Тестовый клиент', claude: 'Claude', codex: 'Codex' }
-const targetName = (target: Target) => presetNames[target.id] ?? filename(target.path)
+const targetName = (target: Target) => presetNames[target.id] ?? (target.type === 'msix' ? target.path : filename(target.path))
+const detailsTitle = (target: Target) => target.type === 'msix' ? 'Подробности MSIX' : target.type === 'name' ? 'Подробности правила по имени' : 'Подробности EXE'
 const adapterGuid = (view: View | null) => view?.settings.vpnInterfaceGuid ?? ''
 const same = (left: string, right: string) => left.toLowerCase() === right.toLowerCase()
 
@@ -63,25 +83,54 @@ function EventList({ events, compact = false }: { events: Event[]; compact?: boo
   </ul> : <p className="empty">Событий пока нет.</p>
 }
 
-function ConfirmDialog({ confirmation, onClose, onConfirm }: {
-  confirmation: Confirmation; onClose: () => void; onConfirm: () => void
+function ConfirmDialog({ confirmation, onClose, onConfirm, onSubmit }: {
+  confirmation: Confirmation; onClose: () => void; onConfirm: () => void; onSubmit: () => Promise<string>
 }) {
   const dialog = useRef<HTMLDialogElement>(null)
+  const [problem, setProblem] = useState('')
+  const [pending, setPending] = useState(false)
+  const focusField = () => dialog.current?.querySelector<HTMLElement>('[data-autofocus]')?.focus()
   useEffect(() => {
     const element = dialog.current
     element?.showModal()
+    focusField()
     return () => element?.close()
   }, [])
+  async function submit() {
+    const invalid = confirmation.validate?.() ?? ''
+    if (invalid) {
+      setProblem(invalid)
+      focusField()
+      return
+    }
+    setProblem('')
+    setPending(true)
+    // При успехе окно закрывается вызывающей стороной, поэтому состояние меняем только при ошибке.
+    const failure = await onSubmit()
+    if (failure) {
+      setPending(false)
+      setProblem(failure)
+      focusField()
+    }
+  }
+  const content = <>
+    <div className="dialog-body">
+      {confirmation.detail}
+      {problem && <p className="error field-error" role="alert">{problem}</p>}
+    </div>
+    <footer className="dialog-actions">
+      <button type="button" className="button" autoFocus onClick={onClose}>{confirmation.run ? 'Отмена' : 'Закрыть'}</button>
+      {confirmation.run && <button type={confirmation.inline ? 'submit' : 'button'} className={'button ' + (confirmation.danger ? 'danger' : 'primary')} disabled={pending} onClick={confirmation.inline ? undefined : onConfirm}>{pending ? 'Выполняется…' : confirmation.label}</button>}
+    </footer>
+  </>
   return <dialog ref={dialog} onCancel={event => { event.preventDefault(); onClose() }} aria-labelledby="confirm-title">
     <header className="panel-title">
       <h2 id="confirm-title"><Shield size={17} />{confirmation.title}</h2>
       <button className="icon-button" aria-label="Закрыть" onClick={onClose}><X size={16} /></button>
     </header>
-    <div className="dialog-body">{confirmation.detail}</div>
-    <footer className="dialog-actions">
-      <button className="button" autoFocus onClick={onClose}>{confirmation.run ? 'Отмена' : 'Закрыть'}</button>
-      {confirmation.run && <button className={'button ' + (confirmation.danger ? 'danger' : 'primary')} onClick={onConfirm}>{confirmation.label}</button>}
-    </footer>
+    {confirmation.inline ?
+      <form className="dialog-form" noValidate onSubmit={event => { event.preventDefault(); if (!pending) void submit() }} onInput={() => setProblem('')}>{content}</form> :
+      content}
   </dialog>
 }
 
@@ -92,7 +141,7 @@ function PreviewDetails({ preview }: { preview: Preview }) {
   })()
   return <>
     <p>Добавить правил WFP: <strong>{preview.addCount}</strong>. Удалить: <strong>{preview.deleteCount}</strong>.</p>
-    {preview.apps?.length ? <ul className="paths">{preview.apps.map(path => <li key={path}>{path}</li>)}</ul> :
+    {preview.apps?.length ? <ul className="paths">{preview.apps.map(path => <li key={path}>{describeTarget(path)}</li>)}</ul> :
       <p className="warning">Нет выбранных приложений. Применение плана снимет существующие фильтры kill switch.</p>}
     {preview.warnings?.map((warning, index) => <p className="warning" key={index}>{warning}</p>)}
     <details><summary>Параметры проверки</summary>
@@ -116,6 +165,9 @@ function App() {
   const inFlight = useRef(false)
   const modalOpen = useRef(false)
   const main = useRef<HTMLElement>(null)
+  const packageInput = useRef<HTMLInputElement>(null)
+  const packageSelect = useRef<HTMLSelectElement>(null)
+  const nameInput = useRef<HTMLInputElement>(null)
 
   async function perform<T>(action: () => Promise<T>, accept: (result: T) => void, reject?: (message: string, result: View | null) => void) {
     if (inFlight.current) return
@@ -142,6 +194,26 @@ function App() {
   const update = (action: () => Promise<View>) => void perform(action, setView)
   const ask = (next: Confirmation) => { modalOpen.current = true; setConfirmation(next) }
   const dismiss = () => { modalOpen.current = false; setConfirmation(null) }
+
+  // Выполняет форму, не закрывая окно: пустая строка — успех, иначе текст ошибки для показа в окне.
+  async function submitInline(next: Confirmation): Promise<string> {
+    if (!next.run) return ''
+    if (inFlight.current) return 'Дождитесь завершения текущей операции.'
+    inFlight.current = true
+    setBusy(true)
+    try {
+      const result = await next.run()
+      setView(result)
+      dismiss()
+      next.onSuccess?.(result)
+      return ''
+    } catch (failure) {
+      return failure instanceof Error ? failure.message : String(failure)
+    } finally {
+      inFlight.current = false
+      setBusy(false)
+    }
+  }
 
   useEffect(() => {
     const refresh = () => {
@@ -205,7 +277,7 @@ function App() {
   const vpnStatus = view?.vpnStatus === 'connected' ? 'Подключён' : view?.vpnStatus === 'disconnected' ? 'Отключён' : 'Статус неизвестен'
   const isVerified = (target: Target) => status === 'active' && target.enabled && (view?.verifiedTargetIds ?? []).includes(target.id)
   const installedPaths = view?.installedPaths ?? []
-  const installedSummary = installedPaths.length ? installedPaths.map(filename).join(', ') :
+  const installedSummary = installedPaths.length ? installedPaths.map(path => filename(describeTarget(path))).join(', ') :
     status === 'disabled' ? 'Нет установленных правил' : 'Список не подтверждён'
   const canInstall = available && !(status === 'active' && !view?.configDirty)
   const filterSummary = status === 'error' ? 'Ошибка чтения' : status === 'unknown' ? 'Не проверено' :
@@ -270,6 +342,37 @@ function App() {
     () => setDiagnosticCopied(true),
   )
 
+  const addPackage = () => void perform(api.listPackages, (packages: Package[]) => ask({
+    title: 'Добавить MSIX-пакет',
+    label: 'Добавить пакет',
+    detail: <>
+      <p>Правило по пакету действует только на приложения в изолированной песочнице Windows (AppContainer).</p>
+      <p className="warning">Claude Desktop и другие приложения без песочницы так не защищаются: для них используйте «Добавить по имени».</p>
+      <label htmlFor="package-choice">Установленное приложение</label>
+      <select id="package-choice" ref={packageSelect} disabled={!packages.length} autoFocus>
+        {packages.length ? packages.map(p => <option key={p.packageFamilyName} value={p.packageFamilyName} title={p.installLocation}>{p.name} · {p.version} · {p.packageFamilyName}</option>) : <option value="">Установленные пакеты не найдены</option>}
+      </select>
+      <label htmlFor="package-family">Или package family вручную</label>
+      <input id="package-family" ref={packageInput} defaultValue="" placeholder="Claude_pzs8sxrjxfjjc" spellCheck={false} />
+    </>,
+    run: () => api.addPackageTarget(packageInput.current?.value.trim() || packageSelect.current?.value || ''),
+  }))
+
+  const addName = () => ask({
+    title: 'Добавить EXE по имени',
+    label: 'Добавить',
+    inline: true,
+    detail: <>
+      <p>Правило совпадёт с EXE с этим именем в любой папке. Защита сохраняется, когда обновление кладёт новую версию в новый каталог, как у Claude Desktop и Claude Code.</p>
+      <p className="warning">Под правило попадёт любой файл с таким именем. Если приложение переименует свой EXE, правило перестанет на него действовать.</p>
+      <p>Для Claude: <code>claude.exe</code> и <code>cowork-svc.exe</code>.</p>
+      <label htmlFor="file-name">Имя EXE</label>
+      <input id="file-name" ref={nameInput} defaultValue="" placeholder="claude.exe" spellCheck={false} autoComplete="off" data-autofocus />
+    </>,
+    validate: () => fileNameProblem(nameInput.current?.value ?? ''),
+    run: () => api.addNameTarget(nameInput.current?.value.trim() ?? ''),
+  })
+
   const targetActions = (target: Target) => <>
     <Switch checked={target.enabled} disabled={!available || target.path === 'Z'} label={'Защищать ' + targetName(target)} onChange={() => {
       if (!target.enabled) {
@@ -289,8 +392,12 @@ function App() {
         <EllipsisVertical size={17} />
       </button>
       {menu === target.id && <div className="popover">
-        <button onClick={() => ask({ title: 'Подробности EXE', detail: <><strong>{targetName(target)}</strong><code>{target.path === 'Z' ? 'Путь не выбран' : target.path}</code></> })}>Подробности EXE</button>
-        <button onClick={() => update(() => api.browseTarget(target.id))}>Выбрать другой EXE</button>
+        <button onClick={() => ask({ title: detailsTitle(target), detail: <>
+          <strong>{targetName(target)}</strong>
+          <code>{target.path === 'Z' ? 'Путь не выбран' : target.path}</code>
+          {target.type === 'name' && <p>Совпадает с EXE с этим именем в любой папке.</p>}
+        </> })}>{detailsTitle(target)}</button>
+        {target.type !== 'msix' && target.type !== 'name' && <button onClick={() => update(() => api.browseTarget(target.id))}>Выбрать другой EXE</button>}
         {target.id !== 'probe' && <button className="error" onClick={() => ask({
           title: 'Удалить приложение из списка?',
           label: 'Удалить приложение',
@@ -301,6 +408,21 @@ function App() {
       </div>}
     </div>
   </>
+
+  const msixTargets = targets.filter(target => target.type === 'msix')
+  const nameTargets = targets.filter(target => target.type === 'name')
+  const exeTargets = targets.filter(target => target.type !== 'msix' && target.type !== 'name')
+  const renderTarget = (target: Target) => {
+    const executable = filename(target.path).toLowerCase()
+    const Glyph = executable === 'claude.exe' ? Sparkles : executable === 'codex.exe' ? Code2 : /probe|code|terminal|powershell|cmd/i.test(executable) ? Terminal : AppWindow
+    const verified = isVerified(target)
+    return <li key={target.id}>
+      <span className={'app-icon ' + (executable === 'claude.exe' ? 'claude' : executable === 'codex.exe' ? 'codex' : target.id)}><Glyph size={18} /></span>
+      <div className="app-copy"><strong>{targetName(target)}</strong><small title={target.path === 'Z' ? undefined : target.path}>{target.path === 'Z' ? 'Путь к EXE не выбран' : target.type === 'name' ? 'В любой папке' : target.path}</small></div>
+      <span className={'badge ' + (verified ? 'verified' : '')}>{verified ? <ShieldCheck size={12} /> : <Shield size={12} />}{verified ? 'Через VPN' : target.enabled ? 'Не подтверждено' : 'Выключено'}</span>
+      {targetActions(target)}
+    </li>
+  }
 
   return <div className="shell">
     <aside className="sidebar">
@@ -332,23 +454,27 @@ function App() {
           {view?.configDirty && <p className="warning pending-changes">Есть изменения, установите новые правила.</p>}
         </section>
         <section className="panel apps">
-          <PanelTitle icon={<LayoutGrid size={17} />} action={<button className="button primary compact" disabled={!available} onClick={() => update(() => api.browseTarget(''))}><Plus size={15} />Добавить приложение</button>}>
-            Защищаемые приложения <span className="counter">{targets.length}</span>
+          <PanelTitle icon={<LayoutGrid size={17} />} action={<button className="button primary compact" disabled={!available} onClick={addName}><Plus size={15} />Добавить по имени</button>}>
+            EXE по имени <span className="counter">{nameTargets.length}</span>
           </PanelTitle>
-          <ul className="app-list">
-            {targets.map(target => {
-              const executable = filename(target.path).toLowerCase()
-              const Glyph = executable === 'claude.exe' ? Sparkles : executable === 'codex.exe' ? Code2 : /probe|code|terminal|powershell|cmd/i.test(executable) ? Terminal : AppWindow
-              const verified = isVerified(target)
-              return <li key={target.id}>
-                <span className={'app-icon ' + (executable === 'claude.exe' ? 'claude' : executable === 'codex.exe' ? 'codex' : target.id)}><Glyph size={18} /></span>
-                <div className="app-copy"><strong>{targetName(target)}</strong><small title={target.path === 'Z' ? undefined : target.path}>{target.path === 'Z' ? 'Путь к EXE не выбран' : target.path}</small></div>
-                <span className={'badge ' + (verified ? 'verified' : '')}>{verified ? <ShieldCheck size={12} /> : <Shield size={12} />}{verified ? 'Через VPN' : target.enabled ? 'Не подтверждено' : 'Выключено'}</span>
-                {targetActions(target)}
-              </li>
-            })}
-          </ul>
-          {!targets.length && <p className="empty">{view ? 'Добавьте EXE приложения, которое должно работать через VPN.' : 'Конфигурация пока недоступна.'}</p>}
+          <p>Правило совпадает с EXE с этим именем в любой папке и не зависит от номера версии в пути. Подходит для Claude Desktop и Claude Code.</p>
+          <ul className="app-list">{nameTargets.map(renderTarget)}</ul>
+          {!nameTargets.length && <p className="empty">Добавьте имя EXE, например claude.exe.</p>}
+        </section>
+        <section className="panel apps">
+          <PanelTitle icon={<LayoutGrid size={17} />} action={<button className="button primary compact" disabled={!available} onClick={addPackage}><Plus size={15} />Добавить MSIX</button>}>
+            Windows App (MSIX) <span className="counter">{msixTargets.length}</span>
+          </PanelTitle>
+          <p>Правило по пакету действует только на приложения в изолированной песочнице Windows (AppContainer). Claude Desktop работает без неё: добавьте его по имени EXE.</p>
+          <ul className="app-list">{msixTargets.map(renderTarget)}</ul>
+          {!msixTargets.length && <p className="empty">Добавьте Windows App, которое должно работать только через VPN.</p>}
+        </section>
+        <section className="panel apps">
+          <PanelTitle icon={<LayoutGrid size={17} />} action={<button className="button primary compact" disabled={!available} onClick={() => update(() => api.browseTarget(''))}><Plus size={15} />Добавить EXE</button>}>
+            Исполняемые файлы (EXE) <span className="counter">{exeTargets.length}</span>
+          </PanelTitle>
+          <ul className="app-list">{exeTargets.map(renderTarget)}</ul>
+          {!exeTargets.length && <p className="empty">{view ? 'Добавьте EXE приложения, которое должно работать через VPN.' : 'Конфигурация пока недоступна.'}</p>}
         </section>
         <div className="main-actions">
           <button className="button primary" disabled={!canInstall} onClick={install}><Download size={16} />Установить правила</button>
@@ -415,7 +541,7 @@ function App() {
         </section>}
       </>}
     </main>
-    {confirmation && <ConfirmDialog confirmation={confirmation} onClose={dismiss} onConfirm={() => {
+    {confirmation && <ConfirmDialog confirmation={confirmation} onClose={dismiss} onSubmit={() => submitInline(confirmation)} onConfirm={() => {
       dismiss()
       if (!confirmation.run) return
       setChangesFilters(Boolean(confirmation.changesFilters))

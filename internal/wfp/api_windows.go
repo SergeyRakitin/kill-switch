@@ -36,6 +36,10 @@ var (
 	filterDestroyEnum = dll.NewProc("FwpmFilterDestroyEnumHandle0")
 	getAppID          = dll.NewProc("FwpmGetAppIdFromFileName0")
 	freeMemory        = dll.NewProc("FwpmFreeMemory0")
+	derivePackageSID  = syscall.NewLazyDLL("userenv.dll").NewProc("DeriveAppContainerSidFromAppContainerName")
+	freeSID           = syscall.NewLazyDLL("advapi32.dll").NewProc("FreeSid")
+	sidToString       = syscall.NewLazyDLL("advapi32.dll").NewProc("ConvertSidToStringSidW")
+	localFree         = syscall.NewLazyDLL("kernel32.dll").NewProc("LocalFree")
 )
 
 // Preserve pointer arguments across stack growth in this syscall wrapper.
@@ -73,6 +77,18 @@ func errorName(code uint32) string {
 		return "FWP_E_SUBLAYER_NOT_FOUND"
 	case 0x8032001C:
 		return "FWP_E_NULL_POINTER"
+	case 0x80320002:
+		return "FWP_E_CONDITION_NOT_FOUND"
+	case 0x80320026:
+		return "FWP_E_MATCH_TYPE_MISMATCH"
+	case 0x80320027:
+		return "FWP_E_TYPE_MISMATCH"
+	case 0x8032002A:
+		return "FWP_E_DUPLICATE_CONDITION"
+	case 0x80320033:
+		return "FWP_E_NEVER_MATCH"
+	case 0x80320035:
+		return "FWP_E_INVALID_PARAMETER"
 	default:
 		return "UNKNOWN"
 	}
@@ -121,6 +137,8 @@ type ObjectState struct {
 type FilterState struct {
 	Key            string           `json:"key"`
 	Application    string           `json:"application,omitempty"`
+	PackageFamily  string           `json:"packageFamily,omitempty"`
+	FileName       string           `json:"fileName,omitempty"`
 	Flags          uint32           `json:"flags"`
 	Layer          string           `json:"layer"`
 	Action         uint32           `json:"action"`
@@ -227,11 +245,12 @@ func (e *Engine) listOwnFilters() ([]FilterState, error) {
 				continue
 			}
 			name := utf16String(f.Display.Name)
-			application, applicationOK := filterApplication(name, f.Action.Type)
-			if !providerMatch || !subMatch || !strings.HasPrefix(name, "KS guard v1") || !applicationOK || !validOwnedFilter(f) {
+			target, targetOK := filterApplication(name, f.Action.Type)
+			if !providerMatch || !subMatch || !strings.HasPrefix(name, "KS guard v1") || !targetOK || !validOwnedFilter(f) {
 				free(&array)
 				return nil, fmt.Errorf("foreign or malformed filter in owned namespace: %s", f.Key.String())
 			}
+			application, packageFamily, fileName := splitTarget(target)
 			var weight uint64
 			if f.Weight.Type == uint64Type && f.Weight.Value != 0 {
 				weight = *(*uint64)(f.Weight.pointer())
@@ -244,7 +263,7 @@ func (e *Engine) listOwnFilters() ([]FilterState, error) {
 				free(&array)
 				return nil, err
 			}
-			result = append(result, FilterState{Key: f.Key.String(), Application: application, Flags: f.Flags, Layer: layerName(f.Layer), Action: f.Action.Type, Weight: weight, Persistent: f.Flags&persistent != 0, Disabled: f.Flags&disabled != 0, ConditionCount: f.ConditionCount, Conditions: observed})
+			result = append(result, FilterState{Key: f.Key.String(), Application: application, PackageFamily: packageFamily, FileName: fileName, Flags: f.Flags, Layer: layerName(f.Layer), Action: f.Action.Type, Weight: weight, Persistent: f.Flags&persistent != 0, Disabled: f.Flags&disabled != 0, ConditionCount: f.ConditionCount, Conditions: observed})
 		}
 		free(&array)
 		if count < 100 {
@@ -272,6 +291,17 @@ func filterApplication(name string, actionType uint32) (string, bool) {
 	return application, true
 }
 
+// splitTarget разбирает цель из имени фильтра: msix:семейство, name:имя EXE или путь EXE.
+func splitTarget(target string) (application, packageFamily, fileName string) {
+	if family, ok := strings.CutPrefix(target, "msix:"); ok {
+		return "", family, ""
+	}
+	if name, ok := strings.CutPrefix(target, "name:"); ok {
+		return "", "", name
+	}
+	return target, "", ""
+}
+
 func validOwnedFilter(f *filter) bool {
 	if f.Layer != layerConnect4 && f.Layer != layerConnect6 && f.Layer != layerRecv4 && f.Layer != layerRecv6 {
 		return false
@@ -283,13 +313,28 @@ func validOwnedFilter(f *filter) bool {
 		return false
 	}
 	conditions := unsafe.Slice(f.Conditions, f.ConditionCount)
-	app := false
+	identities := 0
 	for _, c := range conditions {
-		if c.Field == fieldAppID && c.Match == matchEqual && c.Value.Type == byteBlobType {
-			app = true
+		switch {
+		case c.Field == fieldAppID && c.Value.Type == byteBlobType && (c.Match == matchEqual || c.Match == matchSuffix):
+			identities++
+		case c.Field == fieldPackageID && c.Value.Type == sidType && c.Match == matchEqual:
+			identities++
 		}
 	}
-	return app
+	return identities == 1
+}
+
+// appIDSuffix читает окончание пути из условия сравнения по концу: UTF-16LE с завершающим нулём.
+func appIDSuffix(blob *byteBlob) (string, error) {
+	if blob.Size < 4 || blob.Size > 1024 || blob.Size%2 != 0 || blob.Data == nil {
+		return "", fmt.Errorf("invalid AppID suffix blob")
+	}
+	chars := unsafe.Slice((*uint16)(unsafe.Pointer(blob.Data)), blob.Size/2)
+	if chars[len(chars)-1] != 0 {
+		return "", fmt.Errorf("AppID suffix is not NUL-terminated")
+	}
+	return syscall.UTF16ToString(chars), nil
 }
 
 func readConditions(f *filter) ([]ConditionState, error) {
@@ -303,11 +348,30 @@ func readConditions(f *filter) ([]ConditionState, error) {
 				return nil, fmt.Errorf("invalid AppID condition")
 			}
 			blob := (*byteBlob)(c.Value.pointer())
+			if c.Match == matchSuffix {
+				// В условии по имени хранится только окончание пути, а не путь пользователя: показываем как есть.
+				suffix, err := appIDSuffix(blob)
+				if err != nil {
+					return nil, err
+				}
+				obs.Value = suffix
+				break
+			}
 			if blob.Size == 0 || blob.Size > 8192 || blob.Data == nil {
 				return nil, fmt.Errorf("invalid AppID blob")
 			}
 			sum := sha256.Sum256(unsafe.Slice(blob.Data, blob.Size))
 			obs.Value = hex.EncodeToString(sum[:])
+		case fieldPackageID:
+			obs.Field = "FWPM_CONDITION_ALE_PACKAGE_ID"
+			if c.Value.Type != sidType || c.Value.Value == 0 {
+				return nil, fmt.Errorf("invalid PACKAGE_ID condition")
+			}
+			value, err := sidString(c.Value.Value)
+			if err != nil {
+				return nil, err
+			}
+			obs.Value = value
 		case fieldNextHop:
 			obs.Field = "FWPM_CONDITION_IP_NEXTHOP_INTERFACE"
 			if c.Value.Type != uint64Type || c.Value.Value == 0 {

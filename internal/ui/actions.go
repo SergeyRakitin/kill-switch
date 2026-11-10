@@ -84,14 +84,30 @@ func (c Client) execute(ctx context.Context, args ...string) ([]byte, error) {
 }
 
 func (c Client) PreviewApps(ctx context.Context, apps []string, guid string) (Plan, string, error) {
+	return c.PreviewTargets(ctx, TargetSet{Apps: apps}, guid)
+}
+
+// targetArgs переводит набор целей в аргументы guard.exe install.
+func targetArgs(targets TargetSet) []string {
+	args := []string{}
+	for _, app := range targets.Apps {
+		args = append(args, "--app", app)
+	}
+	for _, family := range targets.PackageFamilies {
+		args = append(args, "--package-family", family)
+	}
+	for _, name := range targets.FileNames {
+		args = append(args, "--file-name", name)
+	}
+	return args
+}
+
+func (c Client) PreviewTargets(ctx context.Context, targets TargetSet, guid string) (Plan, string, error) {
 	var p Plan
 	if strings.TrimSpace(guid) == "" {
 		return p, "", errors.New("GUID VPN не задан в JSON")
 	}
-	args := []string{"install", "--dry-run", "--vpn-guid", guid}
-	for _, app := range apps {
-		args = append(args, "--app", app)
-	}
+	args := append([]string{"install", "--dry-run", "--vpn-guid", guid}, targetArgs(targets)...)
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
 	out, err := c.execute(ctx, args...)
@@ -118,10 +134,11 @@ func (c Client) PreviewApps(ctx context.Context, apps []string, guid string) (Pl
 }
 
 func (c Client) ApplyPlan(ctx context.Context, apps []string, guid, fingerprint, operationID string) (string, error) {
-	args := []string{"install", "--vpn-guid", guid}
-	for _, app := range apps {
-		args = append(args, "--app", app)
-	}
+	return c.ApplyTargets(ctx, TargetSet{Apps: apps}, guid, fingerprint, operationID)
+}
+
+func (c Client) ApplyTargets(ctx context.Context, targets TargetSet, guid, fingerprint, operationID string) (string, error) {
+	args := append([]string{"install", "--vpn-guid", guid}, targetArgs(targets)...)
 	args = append(args, "--plan-fingerprint", fingerprint, "--yes", "--operation-id", operationID)
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
@@ -155,6 +172,27 @@ type Adapter struct {
 	Name, Description, GUID, Status string
 	HardwareInterface               bool
 	LUID                            uint64
+}
+
+type Package struct {
+	Name              string `json:"name"`
+	PackageFamilyName string `json:"packageFamilyName"`
+	Version           string `json:"version"`
+	InstallLocation   string `json:"installLocation"`
+}
+
+func (c Client) PackagesAsync(ctx context.Context) ([]Package, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	out, err := c.execute(ctx, "packages", "--json")
+	if err != nil {
+		return nil, err
+	}
+	var packages []Package
+	if err := json.Unmarshal(out, &packages); err != nil {
+		return nil, fmt.Errorf("MSIX package JSON: %w", err)
+	}
+	return packages, nil
 }
 
 func (c Client) AdaptersAsync(ctx context.Context) ([]Adapter, error) {

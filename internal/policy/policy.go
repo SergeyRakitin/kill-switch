@@ -32,13 +32,15 @@ type Condition struct {
 }
 
 type Rule struct {
-	Key         string      `json:"key"`
-	Application string      `json:"application"`
-	Layer       string      `json:"layer"`
-	Action      string      `json:"action"`
-	Weight      uint64      `json:"weight"`
-	Persistent  bool        `json:"persistent"`
-	Conditions  []Condition `json:"conditions"`
+	Key           string      `json:"key"`
+	Application   string      `json:"application,omitempty"`
+	PackageFamily string      `json:"packageFamily,omitempty"`
+	FileName      string      `json:"fileName,omitempty"`
+	Layer         string      `json:"layer"`
+	Action        string      `json:"action"`
+	Weight        uint64      `json:"weight"`
+	Persistent    bool        `json:"persistent"`
+	Conditions    []Condition `json:"conditions"`
 }
 
 type Plan struct {
@@ -71,6 +73,14 @@ func Build(c config.Config, found *InterfaceState) (Plan, error) {
 		"Candidate only: network behavior, open flows, reboot, DNS and proxy have not been verified.",
 		"CONNECTED VPN state and trustedVpnServerIPs do not grant application destinations.",
 	}}
+	if len(c.PackageFamilies) > 0 {
+		p.Warnings = append(p.Warnings, "MSIX PACKAGE_ID matches only AppContainer processes. Full-trust packaged apps such as Claude Desktop run outside AppContainer and are not matched; protect them with a file-name target.")
+	}
+	if len(c.FileNames) > 0 {
+		p.Warnings = append(p.Warnings,
+			"File-name targets match every EXE with that name in any folder; a renamed EXE is not covered.",
+			"File-name matching uses FWP_MATCH_PREFIX, which Microsoft documents as an end-of-value comparison; confirm it with guard-probe before relying on it.")
+	}
 	trusted := found != nil && strings.EqualFold(strings.Trim(found.GUID, "{}"), strings.Trim(c.VPNInterface.GUID, "{}")) && found.LUID != 0
 	if trusted && c.VPNInterface.ExpectedDescription != "" && !strings.EqualFold(c.VPNInterface.ExpectedDescription, found.Description) {
 		trusted = false
@@ -80,37 +90,75 @@ func Build(c config.Config, found *InterfaceState) (Plan, error) {
 	} else {
 		p.Warnings = append(p.Warnings, "VPN interface identity is not resolved: only BLOCK rules are planned.")
 	}
+	targets := make([]Rule, 0, len(c.Applications)+len(c.PackageFamilies)+len(c.FileNames))
 	for _, app := range c.Applications {
+		targets = append(targets, Rule{Application: app})
+	}
+	for _, family := range c.PackageFamilies {
+		targets = append(targets, Rule{PackageFamily: family})
+	}
+	for _, name := range c.FileNames {
+		targets = append(targets, Rule{FileName: name})
+	}
+	for _, target := range targets {
 		for _, family := range []string{"V4", "V6"} {
 			layer := "FWPM_LAYER_ALE_AUTH_CONNECT_" + family
 			route := found != nil && ((family == "V4" && found.IPv4Route) || (family == "V6" && found.IPv6Route))
 			if trusted && route {
-				p.Add = append(p.Add, Rule{
-					Key: key(app, layer, "permit"), Application: app, Layer: layer, Action: "PERMIT_SOFT", Weight: 200, Persistent: true,
+				permit := Rule{
+					Key: key(identityName(target), layer, "permit"), Application: target.Application, PackageFamily: target.PackageFamily, FileName: target.FileName, Layer: layer, Action: "PERMIT_SOFT", Weight: 200, Persistent: true,
 					Conditions: []Condition{
-						{Field: "FWPM_CONDITION_ALE_APP_ID", Operator: "EQUAL", Value: "FwpmGetAppIdFromFileName0(" + app + ")"},
+						identityCondition(target),
 						{Field: "FWPM_CONDITION_IP_NEXTHOP_INTERFACE", Operator: "EQUAL", Value: fmt.Sprintf("0x%016X", found.LUID)},
 						{Field: "FWPM_CONDITION_FLAGS", Operator: "FLAGS_NONE_SET", Value: "FWP_CONDITION_FLAG_IS_LOOPBACK"},
 					},
-				})
+				}
+				p.Add = append(p.Add, permit)
 			} else {
-				p.Warnings = append(p.Warnings, fmt.Sprintf("%s %s: no matching interface route was observed; BLOCK only", app, family))
+				p.Warnings = append(p.Warnings, fmt.Sprintf("%s %s: no matching interface route was observed; BLOCK only", identityName(target), family))
 			}
-			p.Add = append(p.Add, block(app, layer))
+			p.Add = append(p.Add, block(target, layer))
 			// Inbound-originated flows can send replies; deny until lab evidence supports a narrower rule.
-			p.Add = append(p.Add, block(app, "FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_"+family))
+			p.Add = append(p.Add, block(target, "FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_"+family))
 		}
 	}
 	return p, nil
 }
 
-func block(app, layer string) Rule {
-	return Rule{Key: key(app, layer, "block"), Application: app, Layer: layer, Action: "BLOCK", Weight: 100, Persistent: true,
-		Conditions: []Condition{{Field: "FWPM_CONDITION_ALE_APP_ID", Operator: "EQUAL", Value: "FwpmGetAppIdFromFileName0(" + app + ")"}}}
+func identityName(rule Rule) string {
+	if rule.PackageFamily != "" {
+		return "msix:" + rule.PackageFamily
+	}
+	if rule.FileName != "" {
+		return "name:" + strings.ToLower(rule.FileName)
+	}
+	return rule.Application
 }
 
-func key(app, layer, action string) string {
-	sum := sha256.Sum256([]byte("kill-switch/v1\x00" + strings.ToLower(app) + "\x00" + layer + "\x00" + action))
+// FileNameSuffix — окончание пути приложения, с которым сравнивается правило по имени.
+// WFP хранит путь приложения в нижнем регистре, поэтому окончание тоже в нижнем;
+// обратная косая черта отсекает совпадения с хвостом чужого имени (myclaude.exe).
+func FileNameSuffix(name string) string {
+	return `\` + strings.ToLower(name)
+}
+
+func identityCondition(rule Rule) Condition {
+	if rule.PackageFamily != "" {
+		return Condition{Field: "FWPM_CONDITION_ALE_PACKAGE_ID", Operator: "EQUAL", Value: rule.PackageFamily}
+	}
+	if rule.FileName != "" {
+		return Condition{Field: "FWPM_CONDITION_ALE_APP_ID", Operator: "SUFFIX", Value: FileNameSuffix(rule.FileName)}
+	}
+	return Condition{Field: "FWPM_CONDITION_ALE_APP_ID", Operator: "EQUAL", Value: "FwpmGetAppIdFromFileName0(" + rule.Application + ")"}
+}
+
+func block(target Rule, layer string) Rule {
+	return Rule{Key: key(identityName(target), layer, "block"), Application: target.Application, PackageFamily: target.PackageFamily, FileName: target.FileName, Layer: layer, Action: "BLOCK", Weight: 100, Persistent: true,
+		Conditions: []Condition{identityCondition(target)}}
+}
+
+func key(identity, layer, action string) string {
+	sum := sha256.Sum256([]byte("kill-switch/v1\x00" + strings.ToLower(identity) + "\x00" + layer + "\x00" + action))
 	b := sum[:16]
 	b[6] = (b[6] & 0x0f) | 0x50
 	b[8] = (b[8] & 0x3f) | 0x80

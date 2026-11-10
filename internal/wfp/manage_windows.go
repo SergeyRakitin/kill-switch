@@ -14,6 +14,7 @@ import (
 	"time"
 	"unsafe"
 
+	"kill-switch/internal/config"
 	"kill-switch/internal/policy"
 )
 
@@ -334,9 +335,13 @@ func Verify(plan policy.Plan, actual Snapshot) error {
 		if f.Layer != r.Layer || f.Action != action || f.Weight != r.Weight || f.Disabled || !f.Persistent || f.Flags&(persistent|2|8|16) != persistent || f.ConditionCount != uint32(len(r.Conditions)) {
 			return fmt.Errorf("filter %s differs from plan", r.Key)
 		}
-		appHash, err := appIDHash(r.Application)
-		if err != nil {
-			return err
+		appHash := ""
+		var err error
+		if r.Application != "" {
+			appHash, err = appIDHash(r.Application)
+			if err != nil {
+				return err
+			}
 		}
 		for i, c := range r.Conditions {
 			if i >= len(f.Conditions) {
@@ -357,7 +362,22 @@ func Verify(plan policy.Plan, actual Snapshot) error {
 				wantType = uint32Type
 				wantMatch = matchFlagsNoneSet
 				wantValue = "0x00000001"
+			case "FWPM_CONDITION_ALE_PACKAGE_ID":
+				wantType = sidType
+				wantValue, err = packageSIDString(r.PackageFamily)
+				if err != nil {
+					return err
+				}
 			case "FWPM_CONDITION_ALE_APP_ID":
+				if r.FileName != "" {
+					wantMatch = matchSuffix
+					wantValue = policy.FileNameSuffix(r.FileName)
+					if c.Operator != "SUFFIX" || c.Value != wantValue {
+						return fmt.Errorf("filter %s file-name condition differs from plan", r.Key)
+					}
+				} else if appHash == "" {
+					return errors.New("AppID rule without application")
+				}
 			default:
 				return fmt.Errorf("unexpected plan condition %s", c.Field)
 			}
@@ -389,6 +409,57 @@ func appIDHash(path string) (string, error) {
 	sum := sha256.Sum256(unsafe.Slice(b.Data, b.Size))
 	runtime.KeepAlive(w)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+func derivePackageSIDValue(family string) (uintptr, error) {
+	w, err := syscall.UTF16PtrFromString(family)
+	if err != nil {
+		return 0, err
+	}
+	var sid uintptr
+	if err := invoke(derivePackageSID, uintptr(unsafe.Pointer(w)), uintptr(unsafe.Pointer(&sid))); err != nil {
+		return 0, err
+	}
+	runtime.KeepAlive(w)
+	if sid == 0 {
+		return 0, errors.New("DeriveAppContainerSidFromAppContainerName returned nil")
+	}
+	return sid, nil
+}
+
+func packageSIDString(family string) (string, error) {
+	if family == "" {
+		return "", errors.New("PACKAGE_ID rule without package family")
+	}
+	sid, err := derivePackageSIDValue(family)
+	if err != nil {
+		return "", err
+	}
+	defer freeSID.Call(sid)
+	return sidString(sid)
+}
+
+func sidString(sid uintptr) (string, error) {
+	if sid == 0 {
+		return "", errors.New("nil package SID")
+	}
+	var text *uint16
+	rc, _, callErr := sidToString.Call(sid, uintptr(unsafe.Pointer(&text)))
+	if rc == 0 {
+		if callErr != nil && callErr != syscall.Errno(0) {
+			return "", fmt.Errorf("ConvertSidToStringSidW: %w", callErr)
+		}
+		return "", errors.New("ConvertSidToStringSidW failed")
+	}
+	if text == nil {
+		return "", errors.New("ConvertSidToStringSidW returned nil")
+	}
+	defer localFree.Call(uintptr(unsafe.Pointer(text)))
+	value := utf16String(text)
+	if value == "" {
+		return "", errors.New("empty package SID")
+	}
+	return value, nil
 }
 
 func (e *Engine) addProvider() error {
@@ -430,8 +501,26 @@ func (e *Engine) deleteFilter(key string) error {
 	return err
 }
 
+// fileNameSuffixData готовит значение условия по имени: окончание пути в UTF-16LE
+// с завершающим нулём — в том же виде, в каком FwpmGetAppIdFromFileName0 отдаёт путь целиком.
+func fileNameSuffixData(name string) ([]uint16, error) {
+	if !config.ValidFileName(name) {
+		return nil, fmt.Errorf("invalid file name %q", name)
+	}
+	return syscall.UTF16FromString(policy.FileNameSuffix(name))
+}
+
 func (e *Engine) addRule(r policy.Rule) error {
 	started := time.Now()
+	identities := 0
+	for _, identity := range []string{r.Application, r.PackageFamily, r.FileName} {
+		if identity != "" {
+			identities++
+		}
+	}
+	if identities != 1 {
+		return errors.New("rule must contain exactly one application, package family or file name")
+	}
 	key, err := parseGUID(r.Key)
 	if err != nil {
 		return err
@@ -449,23 +538,49 @@ func (e *Engine) addRule(r policy.Rule) error {
 	default:
 		return fmt.Errorf("unsupported layer %s", r.Layer)
 	}
-	name, err := syscall.UTF16PtrFromString("KS guard v1 " + r.Action + " " + r.Application)
+	target := r.Application
+	if r.PackageFamily != "" {
+		target = "msix:" + r.PackageFamily
+	}
+	if r.FileName != "" {
+		target = "name:" + strings.ToLower(r.FileName)
+	}
+	name, err := syscall.UTF16PtrFromString("KS guard v1 " + r.Action + " " + target)
 	if err != nil {
 		return err
 	}
-	appPath, err := syscall.UTF16PtrFromString(r.Application)
-	if err != nil {
-		return err
-	}
+	var appPath *uint16
 	var appPtr *byteBlob
-	if err := invoke(getAppID, uintptr(unsafe.Pointer(appPath)), uintptr(unsafe.Pointer(&appPtr))); err != nil {
-		return err
+	if r.Application != "" {
+		appPath, err = syscall.UTF16PtrFromString(r.Application)
+		if err != nil {
+			return err
+		}
+		if err := invoke(getAppID, uintptr(unsafe.Pointer(appPath)), uintptr(unsafe.Pointer(&appPtr))); err != nil {
+			return err
+		}
+		defer free(&appPtr)
+		if appPtr == nil {
+			return errors.New("FwpmGetAppIdFromFileName0 returned nil")
+		}
 	}
-	defer free(&appPtr)
-	if appPtr == nil {
-		return errors.New("FwpmGetAppIdFromFileName0 returned nil")
+	var packageSID uintptr
+	if r.PackageFamily != "" {
+		packageSID, err = derivePackageSIDValue(r.PackageFamily)
+		if err != nil {
+			return err
+		}
+		defer freeSID.Call(packageSID)
 	}
-	blob := appPtr
+	var suffixData []uint16
+	var suffixBlob *byteBlob
+	if r.FileName != "" {
+		suffixData, err = fileNameSuffixData(r.FileName)
+		if err != nil {
+			return err
+		}
+		suffixBlob = &byteBlob{Size: uint32(len(suffixData) * 2), Data: (*byte)(unsafe.Pointer(&suffixData[0]))}
+	}
 	weight := new(uint64)
 	*weight = r.Weight
 	conditions := make([]condition, 0, 3)
@@ -473,10 +588,19 @@ func (e *Engine) addRule(r policy.Rule) error {
 	for _, c := range r.Conditions {
 		switch c.Field {
 		case "FWPM_CONDITION_ALE_APP_ID":
-			if c.Operator != "EQUAL" {
+			switch {
+			case c.Operator == "EQUAL" && appPtr != nil:
+				conditions = append(conditions, condition{Field: fieldAppID, Match: matchEqual, Value: value{Type: byteBlobType, Value: uintptr(unsafe.Pointer(appPtr))}})
+			case c.Operator == "SUFFIX" && suffixBlob != nil && c.Value == policy.FileNameSuffix(r.FileName):
+				conditions = append(conditions, condition{Field: fieldAppID, Match: matchSuffix, Value: value{Type: byteBlobType, Value: uintptr(unsafe.Pointer(suffixBlob))}})
+			default:
 				return errors.New("invalid AppID match")
 			}
-			conditions = append(conditions, condition{Field: fieldAppID, Match: matchEqual, Value: value{Type: byteBlobType, Value: uintptr(unsafe.Pointer(blob))}})
+		case "FWPM_CONDITION_ALE_PACKAGE_ID":
+			if c.Operator != "EQUAL" || c.Value != r.PackageFamily || packageSID == 0 {
+				return errors.New("invalid PACKAGE_ID match")
+			}
+			conditions = append(conditions, condition{Field: fieldPackageID, Match: matchEqual, Value: value{Type: sidType, Value: packageSID}})
 		case "FWPM_CONDITION_IP_NEXTHOP_INTERFACE":
 			if c.Operator != "EQUAL" {
 				return errors.New("invalid next-hop match")
@@ -495,8 +619,8 @@ func (e *Engine) addRule(r policy.Rule) error {
 			return fmt.Errorf("unsupported condition %s", c.Field)
 		}
 	}
-	if len(conditions) == 0 || conditions[0].Field != fieldAppID {
-		return errors.New("rule without AppID")
+	if len(conditions) == 0 || (conditions[0].Field != fieldAppID && conditions[0].Field != fieldPackageID) {
+		return errors.New("rule without application identity")
 	}
 	if r.Action == "PERMIT_SOFT" && (len(conditions) != 3 || *luid == 0 || layer == layerRecv4 || layer == layerRecv6) {
 		return errors.New("broad permit refused")
@@ -514,14 +638,22 @@ func (e *Engine) addRule(r policy.Rule) error {
 	pin.Pin(&conditions[0])
 	pin.Pin(&f)
 	pin.Pin(name)
-	pin.Pin(appPath)
+	if appPath != nil {
+		pin.Pin(appPath)
+	}
+	if suffixBlob != nil {
+		pin.Pin(&suffixData[0])
+		pin.Pin(suffixBlob)
+	}
 	defer pin.Unpin()
 	var id uint64
 	err = invoke(filterAdd, e.handle, uintptr(unsafe.Pointer(&f)), 0, uintptr(unsafe.Pointer(&id)))
-	observed("wfp_add_filter", started, err, "key", r.Key, "application", r.Application)
+	observed("wfp_add_filter", started, err, "key", r.Key, "application", r.Application, "packageFamily", r.PackageFamily, "fileName", r.FileName)
 	runtime.KeepAlive(name)
 	runtime.KeepAlive(appPath)
-	runtime.KeepAlive(blob)
+	runtime.KeepAlive(appPtr)
+	runtime.KeepAlive(suffixData)
+	runtime.KeepAlive(suffixBlob)
 	runtime.KeepAlive(weight)
 	runtime.KeepAlive(luid)
 	runtime.KeepAlive(conditions)

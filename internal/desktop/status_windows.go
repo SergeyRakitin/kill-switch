@@ -60,10 +60,17 @@ func (s *Service) refresh(ctx context.Context, operationID string) error {
 		present = count > 0 || snapshot.Provider.Present || snapshot.Sublayer.Present
 		seenInstalled := map[string]bool{}
 		for _, filter := range snapshot.Filters {
-			key := strings.ToLower(filter.Application)
+			target := filter.Application
+			if filter.PackageFamily != "" {
+				target = "msix:" + filter.PackageFamily
+			}
+			if filter.FileName != "" {
+				target = "name:" + filter.FileName
+			}
+			key := strings.ToLower(target)
 			if key != "" && !seenInstalled[key] {
 				seenInstalled[key] = true
-				installedPaths = append(installedPaths, filter.Application)
+				installedPaths = append(installedPaths, target)
 			}
 		}
 		switch {
@@ -133,11 +140,11 @@ func (s *Service) refresh(ctx context.Context, operationID string) error {
 
 func (s *Service) verifyPaths(ctx context.Context, settings ui.Settings, snapshot wfp.Snapshot) ([]string, error) {
 	empty := []string{}
-	apps, err := settings.ActivePaths(s.exeDir)
+	targets, err := settings.ActiveTargets(s.exeDir)
 	if err != nil {
 		return empty, err
 	}
-	_, raw, err := s.client.PreviewApps(ctx, apps, settings.VPNInterfaceGUID)
+	_, raw, err := s.client.PreviewTargets(ctx, targets, settings.VPNInterfaceGUID)
 	if err != nil {
 		return empty, err
 	}
@@ -151,7 +158,7 @@ func (s *Service) verifyPaths(ctx context.Context, settings ui.Settings, snapsho
 	if err := wfp.Verify(plan, snapshot); err != nil {
 		return empty, err
 	}
-	return apps, nil
+	return targets.Display(), nil
 }
 
 func sameGUID(a, b string) bool {

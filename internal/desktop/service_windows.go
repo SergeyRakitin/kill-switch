@@ -58,7 +58,7 @@ type PreviewResult struct {
 type reviewedPlan struct {
 	fingerprint string
 	revision    uint64
-	apps        []string
+	targets     ui.TargetSet
 }
 
 type Service struct {
@@ -223,11 +223,11 @@ func (s *Service) Preview() (result PreviewResult, err error) {
 	revision := s.revision
 	s.mu.Unlock()
 
-	apps, err := settings.ActivePaths(s.exeDir)
+	targets, err := settings.ActiveTargets(s.exeDir)
 	if err != nil {
 		return result, err
 	}
-	plan, raw, err := s.client.PreviewApps(context.Background(), apps, settings.VPNInterfaceGUID)
+	plan, raw, err := s.client.PreviewTargets(context.Background(), targets, settings.VPNInterfaceGUID)
 	warnings := append(s.warnings(), plan.Warnings...)
 
 	s.mu.Lock()
@@ -241,10 +241,10 @@ func (s *Service) Preview() (result PreviewResult, err error) {
 	if err != nil {
 		return result, err
 	}
-	s.reviewed = reviewedPlan{fingerprint: plan.Fingerprint, revision: revision, apps: slices.Clone(apps)}
-	s.addEventLocked("info", fmt.Sprintf("План подготовлен: %d EXE, добавление %d и удаление %d фильтров.", len(apps), len(plan.Add), len(plan.Delete)))
+	s.reviewed = reviewedPlan{fingerprint: plan.Fingerprint, revision: revision, targets: targets.Clone()}
+	s.addEventLocked("info", fmt.Sprintf("План подготовлен: %d EXE, %d MSIX и %d по имени, добавление %d и удаление %d фильтров.", len(targets.Apps), len(targets.PackageFamilies), len(targets.FileNames), len(plan.Add), len(plan.Delete)))
 	return PreviewResult{
-		Fingerprint: plan.Fingerprint, Apps: apps, AddCount: len(plan.Add),
+		Fingerprint: plan.Fingerprint, Apps: targets.Display(), AddCount: len(plan.Add),
 		DeleteCount: len(plan.Delete), Raw: raw, Warnings: warnings,
 	}, nil
 }
@@ -255,17 +255,17 @@ func (s *Service) Apply(fingerprint string, confirmed bool) (View, error) {
 			return errors.New("Подтвердите применение плана.")
 		}
 		view := s.Snapshot()
-		apps, err := view.Settings.ActivePaths(s.exeDir)
+		targets, err := view.Settings.ActiveTargets(s.exeDir)
 		if err != nil {
 			return err
 		}
-		if fingerprint == "" || fingerprint != s.reviewed.fingerprint || s.revision != s.reviewed.revision || !slices.Equal(apps, s.reviewed.apps) {
+		if fingerprint == "" || fingerprint != s.reviewed.fingerprint || s.revision != s.reviewed.revision || !targets.Equal(s.reviewed.targets) {
 			return errors.New("План устарел. Постройте и проверьте новый план.")
 		}
 		return s.mutate("Применение правил", func(ctx context.Context, operationID string) (string, error) {
-			return s.client.ApplyPlan(ctx, apps, view.Settings.VPNInterfaceGUID, fingerprint, operationID)
+			return s.client.ApplyTargets(ctx, targets, view.Settings.VPNInterfaceGUID, fingerprint, operationID)
 		}, func(view View) bool {
-			if len(apps) == 0 {
+			if targets.Count() == 0 {
 				return view.Status == "disabled"
 			}
 			return view.Status == "active"

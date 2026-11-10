@@ -105,3 +105,82 @@ func TestDescriptionMismatchSuppressesPermits(t *testing.T) {
 		}
 	}
 }
+
+func TestPackageFamilyRulesUsePackageID(t *testing.T) {
+	c := testConfig(t)
+	c.PackageFamilies = []string{"Claude_pzs8sxrjxfjjc"}
+	p, err := Build(c, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Add) != 8 {
+		t.Fatalf("want EXE and MSIX block sets, got %d rules", len(p.Add))
+	}
+	packageRules := 0
+	for _, r := range p.Add {
+		if r.PackageFamily == "" {
+			continue
+		}
+		packageRules++
+		if r.Application != "" || r.PackageFamily != "Claude_pzs8sxrjxfjjc" || len(r.Conditions) != 1 || r.Conditions[0].Field != "FWPM_CONDITION_ALE_PACKAGE_ID" || r.Conditions[0].Value != r.PackageFamily {
+			t.Fatalf("invalid package rule: %+v", r)
+		}
+	}
+	if packageRules != 4 {
+		t.Fatalf("want four package rules, got %d", packageRules)
+	}
+}
+
+func TestFileNameRulesUseSuffixMatch(t *testing.T) {
+	c := testConfig(t)
+	c.FileNames = []string{"Claude.exe"}
+	iface := &InterfaceState{GUID: c.VPNInterface.GUID, Description: c.VPNInterface.ExpectedDescription, LUID: 42, IPv4Route: true, IPv6Route: true}
+	p, err := Build(c, iface)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := map[string]bool{}
+	nameRules, permits := 0, 0
+	for _, r := range p.Add {
+		if keys[r.Key] {
+			t.Fatalf("duplicate key %s", r.Key)
+		}
+		keys[r.Key] = true
+		if r.FileName == "" {
+			continue
+		}
+		nameRules++
+		identity := r.Conditions[0]
+		if r.Application != "" || r.PackageFamily != "" || r.FileName != "Claude.exe" || identity.Field != "FWPM_CONDITION_ALE_APP_ID" || identity.Operator != "SUFFIX" || identity.Value != `\claude.exe` {
+			t.Fatalf("invalid file-name rule: %+v", r)
+		}
+		if r.Action == "PERMIT_SOFT" {
+			permits++
+			if len(r.Conditions) != 3 || r.Conditions[1].Field != "FWPM_CONDITION_IP_NEXTHOP_INTERFACE" || r.Conditions[2].Field != "FWPM_CONDITION_FLAGS" {
+				t.Fatalf("file-name permit is not limited to VPN: %+v", r)
+			}
+		} else if len(r.Conditions) != 1 {
+			t.Fatalf("file-name block has extra conditions: %+v", r)
+		}
+	}
+	if nameRules != 6 || permits != 2 {
+		t.Fatalf("want 6 file-name rules with 2 permits, got %d and %d", nameRules, permits)
+	}
+	warned := false
+	for _, warning := range p.Warnings {
+		warned = warned || strings.Contains(warning, "File-name targets")
+	}
+	if !warned {
+		t.Fatalf("file-name warning missing: %v", p.Warnings)
+	}
+	c.FileNames = []string{"claude.exe"}
+	again, err := Build(c, iface)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range p.Add {
+		if p.Add[i].Key != again.Add[i].Key {
+			t.Fatal("file-name rule keys depend on letter case")
+		}
+	}
+}

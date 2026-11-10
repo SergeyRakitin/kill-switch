@@ -154,12 +154,36 @@ func run(args []string) error {
 		}
 		fmt.Printf("routes: %d; DNS interface records: %d; read-only, no WFP changes\n", len(s.Routes), len(s.DNS))
 		return nil
+	case "packages":
+		fs := flag.NewFlagSet("packages", flag.ContinueOnError)
+		asJSON := fs.Bool("json", false, "machine-readable read-only package list")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if fs.NArg() != 0 {
+			return errors.New("unexpected packages argument")
+		}
+		packages, err := diagnose.ReadPackages()
+		if err != nil {
+			return err
+		}
+		if *asJSON {
+			return emit(packages)
+		}
+		for _, p := range packages {
+			fmt.Printf("%s | %s | %s\n", p.Name, p.PackageFamilyName, p.Version)
+		}
+		return nil
 	case "install":
 		fs := flag.NewFlagSet("install", flag.ContinueOnError)
 		dry := fs.Bool("dry-run", false, "plan only; no system changes")
 		file := fs.String("config", "", "JSON configuration")
 		var apps appList
 		fs.Var(&apps, "app", "absolute path to an EXE; repeat for multiple applications")
+		var packageFamilies appList
+		fs.Var(&packageFamilies, "package-family", "MSIX package family name; repeat for multiple packages")
+		var fileNames appList
+		fs.Var(&fileNames, "file-name", "EXE file name without folder, e.g. claude.exe; matches that name in any folder; repeat for multiple names")
 		vpnGUID := fs.String("vpn-guid", "", "VPN interface GUID")
 		fingerprint := fs.String("plan-fingerprint", "", "fingerprint from reviewed dry-run")
 		yes := fs.Bool("yes", false, "confirm real WFP mutation")
@@ -169,12 +193,12 @@ func run(args []string) error {
 		if fs.NArg() != 0 {
 			return errors.New("unexpected install argument")
 		}
-		c, err := installConfig(*file, apps, *vpnGUID)
+		c, err := installConfig(*file, apps, packageFamilies, fileNames, *vpnGUID)
 		started := time.Now()
 		if err != nil {
 			event("validation", "error", started, "error", err)
 		} else {
-			event("validation", "ok", started, "apps", len(c.Applications), "guid", c.VPNInterface.GUID)
+			event("validation", "ok", started, "apps", len(c.Applications), "packageFamilies", len(c.PackageFamilies), "fileNames", len(c.FileNames), "guid", c.VPNInterface.GUID)
 		}
 		if err != nil {
 			return err
@@ -318,10 +342,10 @@ type appList []string
 func (a *appList) String() string     { return strings.Join(*a, ",") }
 func (a *appList) Set(v string) error { *a = append(*a, v); return nil }
 
-func installConfig(file string, apps []string, vpnGUID string) (config.Config, error) {
+func installConfig(file string, apps, packageFamilies, fileNames []string, vpnGUID string) (config.Config, error) {
 	if file != "" {
-		if len(apps) != 0 || vpnGUID != "" {
-			return config.Config{}, errors.New("use either --config or --app with --vpn-guid")
+		if len(apps) != 0 || len(packageFamilies) != 0 || len(fileNames) != 0 || vpnGUID != "" {
+			return config.Config{}, errors.New("use either --config or --app/--package-family/--file-name with --vpn-guid")
 		}
 		return config.Load(file)
 	}
@@ -329,10 +353,12 @@ func installConfig(file string, apps []string, vpnGUID string) (config.Config, e
 		return config.Config{}, errors.New("specify --vpn-guid, or --config")
 	}
 	c := config.Config{
-		SchemaVersion:  1,
-		Applications:   apps,
-		VPNInterface:   config.Interface{GUID: vpnGUID},
-		LoopbackPolicy: "deny",
+		SchemaVersion:   1,
+		Applications:    apps,
+		PackageFamilies: packageFamilies,
+		FileNames:       fileNames,
+		VPNInterface:    config.Interface{GUID: vpnGUID},
+		LoopbackPolicy:  "deny",
 	}
 	return c, c.Validate()
 }

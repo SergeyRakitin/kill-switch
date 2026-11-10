@@ -7,8 +7,12 @@ type ObjectState = {
 
 type ConditionState = {
   field: string
+  match?: number
   value: string
 }
+
+// FWP_MATCH_PREFIX: по документации Microsoft сравнивает конец значения.
+const matchSuffix = 11
 
 type FilterState = {
   key: string
@@ -50,6 +54,7 @@ const layerNames: Record<string, string> = {
 
 const conditionNames: Record<string, string> = {
   FWPM_CONDITION_ALE_APP_ID: 'Приложение (хеш AppID)',
+  FWPM_CONDITION_ALE_PACKAGE_ID: 'MSIX-пакет (SID)',
   FWPM_CONDITION_IP_NEXTHOP_INTERFACE: 'VPN-интерфейс (LUID)',
   FWPM_CONDITION_FLAGS: 'Флаги подключения',
 }
@@ -115,7 +120,7 @@ export function WfpStatus({ raw }: { raw: string }) {
         {!!filter.conditions?.length && <details><summary>Условия фильтра</summary>
           <dl className="condition-list">
             {filter.conditions.map((condition, index) => <div key={index}>
-              <dt>{conditionNames[condition.field] ?? condition.field}</dt>
+              <dt>{condition.field === 'FWPM_CONDITION_ALE_APP_ID' && condition.match === matchSuffix ? 'Приложение (окончание пути)' : conditionNames[condition.field] ?? condition.field}</dt>
               <dd><code>{condition.value}</code></dd>
             </div>)}
           </dl>

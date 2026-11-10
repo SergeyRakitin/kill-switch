@@ -18,3 +18,15 @@ func TestGUIDRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+func TestPackageSIDString(t *testing.T) {
+	for family, want := range map[string]string{
+		"Claude_pzs8sxrjxfjjc":       "S-1-15-2-3557520199-3666692283-3112367039-3524159787-2791857073-3163583606-3692855932",
+		"OpenAI.Codex_2p2nqsd0c76g0": "S-1-15-2-2968813833-811790644-2202111208-3784096404-1081847329-2708967783-1438471679",
+	} {
+		got, err := packageSIDString(family)
+		if err != nil || got != want {
+			t.Fatalf("%s: SID=%q error=%v, want %q", family, got, err, want)
+		}
+	}
+}

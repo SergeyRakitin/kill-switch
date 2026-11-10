@@ -14,6 +14,8 @@ import (
 type Config struct {
 	SchemaVersion       int       `json:"schemaVersion"`
 	Applications        []string  `json:"applications"`
+	PackageFamilies     []string  `json:"packageFamilies,omitempty"`
+	FileNames           []string  `json:"fileNames,omitempty"`
 	VPNInterface        Interface `json:"vpnInterface"`
 	LoopbackPolicy      string    `json:"loopbackPolicy"`
 	TrustedVPNServerIPs []string  `json:"trustedVpnServerIPs,omitempty"`
@@ -39,9 +41,9 @@ func Load(file string) (Config, error) {
 	var extra any
 	if err := dec.Decode(&extra); err != io.EOF {
 		if err == nil {
-			return c, errors.New("config JSON has trailing data")
+			return c, errors.New("config JSON has trailing content")
 		}
-		return c, fmt.Errorf("config JSON trailing data: %w", err)
+		return c, fmt.Errorf("config JSON trailing content: %w", err)
 	}
 	return c, c.Validate()
 }
@@ -76,10 +78,32 @@ func (c Config) Validate() error {
 		if !fi.Mode().IsRegular() || fi.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("application is not a regular file: %q", app)
 		}
-		real, err := filepath.EvalSymlinks(app)
+		real, err := canonicalPath(app)
 		if err != nil || !strings.EqualFold(filepath.Clean(real), filepath.Clean(app)) {
 			return fmt.Errorf("application uses a reparse/ambiguous path: %q", app)
 		}
+	}
+	packages := map[string]bool{}
+	for _, family := range c.PackageFamilies {
+		if !ValidPackageFamily(family) {
+			return fmt.Errorf("invalid MSIX package family: %q", family)
+		}
+		normalized := strings.ToLower(family)
+		if packages[normalized] {
+			return fmt.Errorf("duplicate MSIX package family: %q", family)
+		}
+		packages[normalized] = true
+	}
+	names := map[string]bool{}
+	for _, name := range c.FileNames {
+		if !ValidFileName(name) {
+			return fmt.Errorf("file name must be a plain ASCII .exe name without folders or wildcards: %q", name)
+		}
+		normalized := strings.ToLower(name)
+		if names[normalized] {
+			return fmt.Errorf("duplicate file name: %q", name)
+		}
+		names[normalized] = true
 	}
 	for _, raw := range c.TrustedVPNServerIPs {
 		ip, err := netip.ParseAddr(raw)
@@ -88,6 +112,43 @@ func (c Config) Validate() error {
 		}
 	}
 	return nil
+}
+
+func ValidPackageFamily(raw string) bool {
+	if raw == "" || len(raw) > 128 || strings.Count(raw, "_") != 1 {
+		return false
+	}
+	parts := strings.SplitN(raw, "_", 2)
+	if parts[0] == "" || parts[1] == "" {
+		return false
+	}
+	for _, r := range raw {
+		if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '.' || r == '-' || r == '_' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// ValidFileName принимает только имя EXE без каталога: правило по имени
+// совпадает с файлом в любой папке, поэтому разделители путей и маски запрещены.
+// Допускается лишь печатный ASCII: WFP сравнивает путь в нижнем регистре,
+// а приведение регистра не-ASCII символов в Go и в ядре Windows может разойтись,
+// и тогда правило молча перестанет совпадать.
+func ValidFileName(raw string) bool {
+	if len(raw) > 255 || raw != strings.TrimSpace(raw) || !strings.EqualFold(filepath.Ext(raw), ".exe") {
+		return false
+	}
+	if strings.Trim(raw[:len(raw)-len(".exe")], ". ") == "" {
+		return false
+	}
+	for _, r := range raw {
+		if r < 0x20 || r > 0x7e || strings.ContainsRune(`<>:"/\|?*`, r) {
+			return false
+		}
+	}
+	return true
 }
 
 func windowsAbsoluteEXE(path string) bool {

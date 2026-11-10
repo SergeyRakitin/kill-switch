@@ -133,6 +133,10 @@ small { color: var(--muted); }
 .content-panel .panel-title { padding-inline: 0; }
 .content-panel label { font-weight: 600; }
 select { padding: 7px; background: #192a3c; border: 1px solid #3c526a; width: 100%; max-width: 480px; }
+input { padding: 7px; color: #edf3fb; background: #0d1722; border: 1px solid #d7e2ee; border-radius: 7px; width: 100%; max-width: 480px; }
+input::placeholder { color: #7f91a6; }
+input:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.dialog-form:has(.field-error) input { border-color: var(--error); }
 .adapter-info { display: flex; flex-wrap: wrap; gap: 7px 10px; }
 .error-banner { display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: start; gap: 8px; padding: 6px 9px; margin-bottom: 9px; color: #ffb5bc; background: #311e2a; border: 1px solid #653344; border-radius: 8px; font-size: 11px; overflow-wrap: anywhere; }
 .error-banner svg { margin-top: 2px; }

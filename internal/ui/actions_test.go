@@ -133,3 +133,47 @@ func TestAdaptersAsyncReadsHardwareFlag(t *testing.T) {
 		t.Fatalf("adapters=%+v err=%v", adapters, err)
 	}
 }
+
+func TestPreviewAndApplyPackageTargets(t *testing.T) {
+	p := Plan{Kind: "UNVERIFIED_DRY_RUN", ExistingWFPState: "READ", ProviderGUID: policy.ProviderGUID, SublayerGUID: policy.SublayerGUID, Fingerprint: "hash"}
+	b, _ := json.Marshal(p)
+	var calls [][]string
+	c := Client{RunContext: func(ctx context.Context, args ...string) ([]byte, error) {
+		calls = append(calls, append([]string(nil), args...))
+		return b, nil
+	}}
+	targets := TargetSet{
+		Apps:            []string{`C:\Lab\Claude.exe`},
+		PackageFamilies: []string{"Claude_pzs8sxrjxfjjc", "OpenAI.Codex_2p2nqsd0c76g0"},
+		FileNames:       []string{"claude.exe"},
+	}
+	got, _, err := c.PreviewTargets(context.Background(), targets, "guid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = c.ApplyTargets(context.Background(), targets, "guid", got.Fingerprint, "op-1"); err != nil {
+		t.Fatal(err)
+	}
+	selection := []string{"--app", targets.Apps[0], "--package-family", targets.PackageFamilies[0], "--package-family", targets.PackageFamilies[1], "--file-name", "claude.exe"}
+	wantPreview := append([]string{"install", "--dry-run", "--vpn-guid", "guid"}, selection...)
+	if !reflect.DeepEqual(calls[0], wantPreview) {
+		t.Fatalf("preview args: %v", calls[0])
+	}
+	wantApply := append(append([]string{"install", "--vpn-guid", "guid"}, selection...), "--plan-fingerprint", "hash", "--yes", "--operation-id", "op-1")
+	if !reflect.DeepEqual(calls[1], wantApply) {
+		t.Fatalf("apply args: %v", calls[1])
+	}
+}
+
+func TestPackagesAsync(t *testing.T) {
+	c := Client{RunContext: func(_ context.Context, args ...string) ([]byte, error) {
+		if !reflect.DeepEqual(args, []string{"packages", "--json"}) {
+			t.Fatalf("args=%v", args)
+		}
+		return []byte(`[{"name":"Claude","packageFamilyName":"Claude_pzs8sxrjxfjjc","version":"4.23118.1.0","installLocation":"C:\\Program Files\\WindowsApps\\Claude"}]`), nil
+	}}
+	packages, err := c.PackagesAsync(context.Background())
+	if err != nil || len(packages) != 1 || packages[0].PackageFamilyName != "Claude_pzs8sxrjxfjjc" {
+		t.Fatalf("packages=%+v error=%v", packages, err)
+	}
+}

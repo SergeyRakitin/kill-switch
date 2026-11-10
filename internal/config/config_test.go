@@ -29,3 +29,40 @@ func TestValidationRejectsAmbiguousCoverage(t *testing.T) {
 		t.Fatal("unknown schema accepted")
 	}
 }
+
+func TestPackageFamilyValidation(t *testing.T) {
+	c := Config{SchemaVersion: 1, PackageFamilies: []string{"Claude_pzs8sxrjxfjjc", "OpenAI.Codex_2p2nqsd0c76g0"}, VPNInterface: Interface{GUID: "05b44401-f55a-1be5-94c3-7fa54bb2d33e"}}
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, invalid := range []string{"", "Claude", "Claude_*", `C:\Program Files\WindowsApps\Claude_`, "two_families_here"} {
+		c.PackageFamilies = []string{invalid}
+		if err := c.Validate(); err == nil {
+			t.Fatalf("invalid package family accepted: %q", invalid)
+		}
+	}
+	c.PackageFamilies = []string{"Claude_pzs8sxrjxfjjc", "claude_pzs8sxrjxfjjc"}
+	if err := c.Validate(); err == nil {
+		t.Fatal("duplicate package family accepted")
+	}
+}
+
+func TestFileNameValidation(t *testing.T) {
+	c := Config{SchemaVersion: 1, FileNames: []string{"claude.exe", "cowork-svc.exe", "Claude Helper (1).EXE"}, VPNInterface: Interface{GUID: "05b44401-f55a-1be5-94c3-7fa54bb2d33e"}}
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, invalid := range []string{
+		"", ".exe", "...exe", "claude", "claude.dll", `C:\Apps\claude.exe`, `app\claude.exe`, "app/claude.exe",
+		"*.exe", "cl?ude.exe", " claude.exe", "claude.exe ", "клод.exe", "claude\x00.exe", `cla"ude.exe`,
+	} {
+		c.FileNames = []string{invalid}
+		if err := c.Validate(); err == nil {
+			t.Fatalf("invalid file name accepted: %q", invalid)
+		}
+	}
+	c.FileNames = []string{"claude.exe", "CLAUDE.EXE"}
+	if err := c.Validate(); err == nil {
+		t.Fatal("duplicate file name accepted")
+	}
+}

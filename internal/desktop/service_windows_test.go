@@ -290,3 +290,77 @@ func TestServiceReportsInstalledApplicationsAfterSettingsChange(t *testing.T) {
 		t.Fatalf("dirty=%v installed paths=%v error=%v", view.ConfigDirty, view.InstalledPaths, err)
 	}
 }
+
+func TestServiceAddsMSIXTarget(t *testing.T) {
+	service := newTestService(t, nil)
+	view, err := service.AddPackageTarget("Claude_pzs8sxrjxfjjc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var target *ui.Target
+	for i := range view.Settings.Targets {
+		if view.Settings.Targets[i].Kind() == ui.TargetTypeMSIX {
+			target = &view.Settings.Targets[i]
+		}
+	}
+	if target == nil || target.Path != "Claude_pzs8sxrjxfjjc" || !target.Enabled || !view.ConfigDirty {
+		t.Fatalf("targets=%+v dirty=%v", view.Settings.Targets, view.ConfigDirty)
+	}
+	if _, err := service.AddPackageTarget("claude_pzs8sxrjxfjjc"); err == nil {
+		t.Fatal("duplicate package family accepted")
+	}
+	if _, err := service.AddPackageTarget(`C:\Program Files\WindowsApps\Claude_`); err == nil {
+		t.Fatal("folder accepted as package family")
+	}
+}
+
+func TestServiceAddsNameTarget(t *testing.T) {
+	service := newTestService(t, nil)
+	view, err := service.AddNameTarget("  claude.exe ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var target *ui.Target
+	for i := range view.Settings.Targets {
+		if view.Settings.Targets[i].Kind() == ui.TargetTypeName {
+			target = &view.Settings.Targets[i]
+		}
+	}
+	if target == nil || target.Path != "claude.exe" || !target.Enabled || !strings.HasPrefix(target.ID, "custom-name-") || !view.ConfigDirty {
+		t.Fatalf("targets=%+v dirty=%v", view.Settings.Targets, view.ConfigDirty)
+	}
+	if _, err := service.AddNameTarget("CLAUDE.EXE"); err == nil {
+		t.Fatal("duplicate file name accepted")
+	}
+	for _, invalid := range []string{`C:\Users\me\AppData\Roaming\Claude\claude-code\2.1.321\claude.exe`, "*.exe", "claude"} {
+		if _, err := service.AddNameTarget(invalid); err == nil {
+			t.Fatalf("invalid file name accepted: %q", invalid)
+		}
+	}
+	if _, err := service.BrowseTarget(target.ID); err == nil || !strings.Contains(err.Error(), "именем файла") {
+		t.Fatalf("file picker allowed for name target: %v", err)
+	}
+}
+
+func TestServicePreviewPassesNameTargets(t *testing.T) {
+	var preview []string
+	service := newTestService(t, func(_ context.Context, args ...string) ([]byte, error) {
+		if args[0] == "install" && slices.Contains(args, "--dry-run") {
+			preview = args
+			return previewJSON("preview", "digest"), nil
+		}
+		t.Fatalf("unexpected guard call: %v", args)
+		return nil, nil
+	})
+	if _, err := service.AddNameTarget("claude.exe"); err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.Preview()
+	if err != nil {
+		t.Fatal(err)
+	}
+	index := slices.Index(preview, "--file-name")
+	if index < 0 || index+1 >= len(preview) || preview[index+1] != "claude.exe" || !slices.Contains(result.Apps, "name:claude.exe") {
+		t.Fatalf("preview args=%v apps=%v", preview, result.Apps)
+	}
+}
