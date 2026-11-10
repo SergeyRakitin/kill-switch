@@ -38,7 +38,7 @@ Copy-Item '.\guard-probe.exe' "$lab\v2\ks-name-probe.exe"
 Copy-Item '.\guard-probe.exe' "$lab\control\ks-control-probe.exe"
 ```
 
-2. В панели «EXE по имени» добавьте `ks-name-probe.exe` и установите правила. В плане должна быть строка «ks-name-probe.exe — в любой папке».
+2. В панели «EXE по имени (любая папка)» добавьте `ks-name-probe.exe` и установите правила. В плане должна быть строка «ks-name-probe.exe — в любой папке».
 3. При включённом VPN запустите монитор для каждой из трёх копий в отдельном окне PowerShell.
 4. Выключите VPN: у обеих копий `ks-name-probe.exe` ответы прекращаются, контрольная копия продолжает получать `status=200`.
 5. Включите VPN: обе копии восстанавливаются.
