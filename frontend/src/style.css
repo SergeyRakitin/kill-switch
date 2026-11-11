@@ -68,16 +68,27 @@ small { color: var(--muted); }
 .panel-title h2 { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 650; }
 .panel-title h2 svg { color: #abc8e5; }
 .counter { padding: 1px 6px; border-radius: 5px; color: #c7d5e6; background: #263647; font-size: 11px; }
-.hint { position: relative; display: inline-grid; place-items: center; color: var(--muted); cursor: help; border-radius: 50%; }
-.panel-title h2 .hint svg { color: inherit; }
-.hint:hover, .hint:focus-visible { color: var(--blue); outline: none; }
-.hint::after {
+/* Всплывающая подсказка из data-tip: появляется при наведении и при фокусе с клавиатуры. */
+.has-tip { position: relative; }
+.has-tip::after {
   content: attr(data-tip); position: absolute; left: -6px; top: calc(100% + 7px); z-index: 20; width: max-content; max-width: min(320px, 70vw);
   padding: 7px 9px; border: 1px solid #3b536d; border-radius: 7px; color: #ced9e8; background: #0d1722; box-shadow: 0 8px 22px #0009;
-  font-size: 11px; font-weight: 400; line-height: 1.45; letter-spacing: normal; white-space: pre-line;
+  font-size: 11px; font-weight: 400; line-height: 1.45; letter-spacing: normal; white-space: pre-line; overflow-wrap: anywhere;
   opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .12s;
 }
-.hint:hover::after, .hint:focus-visible::after { opacity: 1; visibility: visible; }
+.has-tip:hover::after, .has-tip:focus-visible::after { opacity: 1; visibility: visible; }
+.has-tip:focus-visible { outline: none; }
+/* Подсказка шириной с сам элемент: длинные пути переносятся и не выходят за край окна. */
+.has-tip.fill::after { left: 0; right: 0; width: auto; max-width: none; }
+.hint { display: inline-grid; place-items: center; color: var(--muted); cursor: help; border-radius: 50%; }
+.panel-title h2 .hint svg { color: inherit; }
+.hint:hover, .hint:focus-visible { color: var(--blue); }
+.installed-summary { cursor: help; }
+.loading-plate { display: flex; align-items: center; gap: 12px; width: fit-content; max-width: 100%; margin: 18vh auto 0; padding: 14px 18px; border: 1px solid var(--border); border-radius: 10px; color: #ced9e8; background: linear-gradient(145deg, #15212e, #121c28); }
+.loading-plate svg { color: var(--blue); }
+.loading-plate strong, .loading-plate small { display: block; }
+.loading-plate strong { font-size: 14px; font-weight: 650; }
+.loading-plate small { margin-top: 2px; }
 .apps > header { border-bottom: 1px solid #223142; }
 .app-list { padding: 0 9px; }
 .app-list li { display: flex; align-items: center; gap: 7px; min-height: 41px; border-bottom: 1px solid #223142; }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Activity, AppWindow, Check, CircleAlert, CircleHelp, Code2, Sparkles, ClipboardCopy, Download, EllipsisVertical, FileSearch, FileText, FlaskConical, House, Info, LayoutGrid, Monitor, Plus, RefreshCw, Settings, Shield, ShieldCheck, Terminal, Trash2, TriangleAlert, X } from 'lucide-react'
+import { Activity, AppWindow, Check, CircleAlert, CircleHelp, Code2, Sparkles, ClipboardCopy, Download, EllipsisVertical, FileSearch, FileText, FlaskConical, House, Info, LayoutGrid, Monitor, Plus, RefreshCw, Settings, Shield, ShieldCheck, Terminal, Trash2, TriangleAlert, LoaderCircle, X } from 'lucide-react'
 import { Clipboard } from '@wailsio/runtime'
 import { api, type Event, type Package, type Preview, type Target, type View } from './api'
 import { WfpStatus } from './WfpStatus'
@@ -78,7 +78,7 @@ const ruleHints = {
 }
 
 function Hint({ text }: { text: string }) {
-  return <span className="hint" tabIndex={0} role="note" aria-label={text} data-tip={text}><CircleHelp size={15} /></span>
+  return <span className="hint has-tip" tabIndex={0} role="note" aria-label={text} data-tip={text}><CircleHelp size={15} /></span>
 }
 
 function EventList({ events, compact = false }: { events: Event[]; compact?: boolean }) {
@@ -168,6 +168,7 @@ function App() {
   const [route, setRoute] = useState<Route>('home')
   const [view, setView] = useState<View | null>(null)
   const [busy, setBusy] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [changesFilters, setChangesFilters] = useState(false)
   const [error, setError] = useState('')
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null)
@@ -231,7 +232,8 @@ function App() {
     const refresh = () => {
       if (!modalOpen.current) void perform(api.refresh, setView)
     }
-    refresh()
+    // Первое чтение WFP и адаптеров занимает несколько секунд: до его конца вместо страницы — плашка загрузки.
+    void perform(api.refresh, setView).finally(() => setLoading(false))
     const timer = window.setInterval(refresh, 60_000)
     return () => window.clearInterval(timer)
   }, [])
@@ -289,8 +291,18 @@ function App() {
   const vpnStatus = view?.vpnStatus === 'connected' ? 'Подключён' : view?.vpnStatus === 'disconnected' ? 'Отключён' : 'Статус неизвестен'
   const isVerified = (target: Target) => status === 'active' && target.enabled && (view?.verifiedTargetIds ?? []).includes(target.id)
   const installedPaths = view?.installedPaths ?? []
-  const installedSummary = installedPaths.length ? installedPaths.map(path => filename(describeTarget(path))).join(', ') :
+  // Сводка: число приложений каждого вида; полный список — во всплывающей подсказке.
+  const installedNames = installedPaths.filter(path => path.startsWith('name:')).map(path => path.slice(5))
+  const installedPackages = installedPaths.filter(path => path.startsWith('msix:')).map(path => path.slice(5))
+  const installedFiles = installedPaths.filter(path => !path.startsWith('name:') && !path.startsWith('msix:'))
+  const installedGroups = [
+    { label: 'По имени', items: installedNames, list: installedNames.join(', ') },
+    { label: 'По пути', items: installedFiles, list: '\n' + installedFiles.join('\n') },
+    { label: 'MSIX', items: installedPackages, list: installedPackages.join(', ') },
+  ].filter(group => group.items.length)
+  const installedSummary = installedPaths.length ? installedGroups.map(group => `${group.label}: ${group.items.length}`).join(' · ') :
     status === 'disabled' ? 'Нет установленных правил' : 'Список не подтверждён'
+  const installedDetails = installedGroups.map(group => `${group.label}: ${group.list}`).join('\n')
   const missingIds = view?.missingTargetIds ?? []
   const isMissing = (target: Target) => missingIds.includes(target.id)
   // Включённая запись с пропавшим файлом не даёт построить план: установку блокируем, пока запись не исправят.
@@ -363,7 +375,7 @@ function App() {
     label: 'Добавить пакет',
     detail: <>
       <p>Правило по пакету действует только на приложения в изолированной песочнице Windows (AppContainer).</p>
-      <p className="warning">Claude Desktop и другие приложения без песочницы так не защищаются: для них используйте «Добавить по имени».</p>
+      <p className="warning">Claude Desktop и другие приложения без песочницы так не защищаются: для них используйте «Добавить имя» в списке «EXE по имени».</p>
       <label htmlFor="package-choice">Установленное приложение</label>
       <select id="package-choice" ref={packageSelect} disabled={!packages.length} autoFocus>
         {packages.length ? packages.map(p => <option key={p.packageFamilyName} value={p.packageFamilyName} title={p.installLocation}>{p.name} · {p.version} · {p.packageFamilyName}</option>) : <option value="">Установленные пакеты не найдены</option>}
@@ -454,6 +466,10 @@ function App() {
     </aside>
 
     <main ref={main} className="main">
+      {loading ? <div className="loading-plate" role="status" aria-live="polite">
+        <LoaderCircle className="animate-spin motion-reduce:animate-none" size={22} />
+        <div><strong>Загрузка…</strong><small>Читаем правила WFP и сетевые адаптеры. Это занимает несколько секунд.</small></div>
+      </div> : <>
       {errorText && !(route === 'home' && status === 'error') && <div className="error-banner" role="alert"><CircleAlert size={17} /><div><strong>{view ? 'Операция завершилась с ошибкой' : 'Сервис Wails недоступен'}</strong>{route === 'diagnostics' ? <div>{errorText}</div> : <button className="text-button" onClick={() => navigate('diagnostics')}>Диагностика</button>}</div><button className="icon-button" aria-label="Скрыть сообщение" disabled={!error} onClick={() => setError('')}><X size={16} /></button></div>}
 
       {route === 'home' ? <div className="dashboard">
@@ -467,13 +483,15 @@ function App() {
           <ul>
             <li><span className={'status-icon ' + (status === 'active' ? 'good' : '')}>{status === 'active' ? <Check size={15} /> : <CircleHelp size={15} />}</span><div><strong>Фильтры WFP</strong><small>{filterSummary}</small></div></li>
             <li><span className={'status-icon ' + (view?.vpnStatus === 'connected' ? 'good' : '')}>{view?.vpnStatus === 'connected' ? <Check size={15} /> : <CircleHelp size={15} />}</span><div><strong>VPN-интерфейс</strong><small>{vpnName} · {vpnStatus}</small></div></li>
-            <li><span className={'status-icon ' + (installedPaths.length ? 'good' : '')}>{installedPaths.length ? <Check size={15} /> : <CircleHelp size={15} />}</span><div><strong>Правила установлены для приложений</strong><small title={installedPaths.join('\n')}>{installedSummary}</small></div></li>
+            <li><span className={'status-icon ' + (installedPaths.length ? 'good' : '')}>{installedPaths.length ? <Check size={15} /> : <CircleHelp size={15} />}</span>{installedPaths.length ?
+              <div className="has-tip fill installed-summary" tabIndex={0} data-tip={installedDetails} aria-label={'Правила установлены для приложений. ' + installedDetails}><strong>Правила установлены для приложений</strong><small>{installedSummary}</small></div> :
+              <div><strong>Правила установлены для приложений</strong><small>{installedSummary}</small></div>}</li>
           </ul>
           {view?.configDirty && !blockedByMissing && <p className="warning pending-changes">Есть изменения, установите новые правила.</p>}
           {blockedByMissing && <p className="warning pending-changes">Установка правил недоступна: файлы некоторых записей «EXE по точному пути» не найдены. Удалите или выключите эти записи либо выберите EXE заново.</p>}
         </section>
         <section className="panel apps">
-          <PanelTitle icon={<LayoutGrid size={17} />} action={<button className="button primary compact" disabled={!available} onClick={addName}><Plus size={15} />Добавить по имени</button>}>
+          <PanelTitle icon={<LayoutGrid size={17} />} action={<button className="button primary compact" disabled={!available} onClick={addName}><Plus size={15} />Добавить имя</button>}>
             EXE по имени (любая папка) <span className="counter">{nameTargets.length}</span><Hint text={ruleHints.name} />
           </PanelTitle>
           <p>Правила применяются ко всем Exe-файлам с указанным именем вне зависимости от местоположения. Подходит для приложений, которые при обновлении устанавливаются по новому пути, например, Claude Desktop.</p>
@@ -481,7 +499,7 @@ function App() {
           {!nameTargets.length && <p className="empty">Добавьте имя EXE, например claude.exe.</p>}
         </section>
         <section className="panel apps">
-          <PanelTitle icon={<LayoutGrid size={17} />} action={<button className="button primary compact" disabled={!available} onClick={() => update(() => api.browseTarget(''))}><Plus size={15} />Добавить EXE</button>}>
+          <PanelTitle icon={<LayoutGrid size={17} />} action={<button className="button primary compact" disabled={!available} onClick={() => update(() => api.browseTarget(''))}><Plus size={15} />Добавить путь</button>}>
             EXE по точному пути <span className="counter">{exeTargets.length}</span><Hint text={ruleHints.path} />
           </PanelTitle>
           <p>Правила применяются к Exe-файлам с указанным точным расположением.</p>
@@ -489,7 +507,7 @@ function App() {
           {!exeTargets.length && <p className="empty">{view ? 'Добавьте EXE приложения, которое должно работать через VPN.' : 'Конфигурация пока недоступна.'}</p>}
         </section>
         <section className="panel apps">
-          <PanelTitle icon={<LayoutGrid size={17} />} action={<button className="button primary compact" disabled={!available} onClick={addPackage}><Plus size={15} />Добавить MSIX</button>}>
+          <PanelTitle icon={<LayoutGrid size={17} />} action={<button className="button primary compact" disabled={!available} onClick={addPackage}><Plus size={15} />Добавить пакет</button>}>
             Пакеты MSIX (Windows App) <span className="counter">{msixTargets.length}</span><Hint text={ruleHints.msix} />
           </PanelTitle>
           <p>Правила применяются ко всем exe-файлам по имени пакета MSIX (Windows App из Microsoft Store), вне зависимости от имени и местоположения файла.</p>
@@ -559,6 +577,7 @@ function App() {
           <p>Утилита Windows для управления правилами Windows Filtering Platform (WFP) для выбранных приложений.</p>
           <p>Постоянные правила WFP сохраняются при закрытии окна. Удалить их можно в разделе «Правила WFP».</p>
         </section>}
+      </>}
       </>}
     </main>
     {confirmation && <ConfirmDialog confirmation={confirmation} onClose={dismiss} onSubmit={() => submitInline(confirmation)} onConfirm={() => {
