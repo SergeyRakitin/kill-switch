@@ -362,6 +362,33 @@ func TestServicePreviewExplainsMissingExe(t *testing.T) {
 	}
 }
 
+func TestServiceJournalsOnlyStateChanges(t *testing.T) {
+	service := newTestService(t, func(_ context.Context, args ...string) ([]byte, error) {
+		switch args[0] {
+		case "status":
+			return []byte(emptyStatus), nil
+		case "diagnose":
+			return []byte(`{"adapters":[]}`), nil
+		}
+		t.Fatalf("unexpected guard call: %v", args)
+		return nil, nil
+	})
+	for range 3 {
+		if _, err := service.Refresh(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reads := 0
+	for _, event := range service.Snapshot().Events {
+		if strings.HasPrefix(event.Message, "Состояние WFP перечитано") {
+			reads++
+		}
+	}
+	if reads != 1 {
+		t.Fatalf("unchanged state journaled %d times: %+v", reads, service.Snapshot().Events)
+	}
+}
+
 func TestServiceMarksMissingTargets(t *testing.T) {
 	snapshot := wfp.Snapshot{
 		Provider: wfp.ObjectState{Present: true, Persistent: true},

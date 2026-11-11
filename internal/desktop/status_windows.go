@@ -109,6 +109,8 @@ func (s *Service) refresh(ctx context.Context, operationID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.view.RawStatus = raw
+	// Обновление по таймеру идёт раз в минуту: в журнал пишем только смену состояния.
+	changed := s.view.Status != status || s.view.Reason != reason
 	s.view.Status, s.view.Reason = status, reason
 	s.view.FilterCount, s.view.ObjectsPresent = count, present
 	s.view.VerifiedPaths = paths
@@ -150,7 +152,7 @@ func (s *Service) refresh(ctx context.Context, operationID string) error {
 	if readErr != nil {
 		return fmt.Errorf("Чтение состояния WFP: %w", readErr)
 	}
-	if operationID == "" {
+	if operationID == "" && changed {
 		s.addEventLocked("info", "Состояние WFP перечитано. "+reason)
 	}
 	return nil

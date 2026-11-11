@@ -69,18 +69,9 @@ func Build(c config.Config, found *InterfaceState) (Plan, error) {
 	if err := c.Validate(); err != nil {
 		return Plan{}, err
 	}
-	p := Plan{Kind: "UNVERIFIED_DRY_RUN", ExistingWFPState: "UNKNOWN", ProviderGUID: ProviderGUID, SublayerGUID: SublayerGUID, SublayerWeight: SublayerWeight, Add: []Rule{}, Delete: []string{}, Warnings: []string{
-		"Candidate only: network behavior, open flows, reboot, DNS and proxy have not been verified.",
-		"CONNECTED VPN state and trustedVpnServerIPs do not grant application destinations.",
-	}}
-	if len(c.PackageFamilies) > 0 {
-		p.Warnings = append(p.Warnings, "MSIX PACKAGE_ID matches only AppContainer processes. Full-trust packaged apps such as Claude Desktop run outside AppContainer and are not matched; protect them with a file-name target.")
-	}
-	if len(c.FileNames) > 0 {
-		p.Warnings = append(p.Warnings,
-			"File-name targets match every EXE with that name in any folder; a renamed EXE is not covered.",
-			"File-name matching uses FWP_MATCH_PREFIX, which Microsoft documents as an end-of-value comparison; confirm it with guard-probe before relying on it.")
-	}
+	// Предупреждения плана попадают в журнал GUI, поэтому в них только то, что требует действий.
+	// Постоянные пояснения об устройстве режимов живут в документации и подсказках интерфейса.
+	p := Plan{Kind: "UNVERIFIED_DRY_RUN", ExistingWFPState: "UNKNOWN", ProviderGUID: ProviderGUID, SublayerGUID: SublayerGUID, SublayerWeight: SublayerWeight, Add: []Rule{}, Delete: []string{}, Warnings: []string{}}
 	trusted := found != nil && strings.EqualFold(strings.Trim(found.GUID, "{}"), strings.Trim(c.VPNInterface.GUID, "{}")) && found.LUID != 0
 	if trusted && c.VPNInterface.ExpectedDescription != "" && !strings.EqualFold(c.VPNInterface.ExpectedDescription, found.Description) {
 		trusted = false
@@ -100,6 +91,11 @@ func Build(c config.Config, found *InterfaceState) (Plan, error) {
 	for _, name := range c.FileNames {
 		targets = append(targets, Rule{FileName: name})
 	}
+	// Без маршрута IPv4 через VPN защищаемые приложения теряют сеть — об этом стоит предупредить.
+	// Отсутствие маршрута IPv6 обычно для VPN: IPv6 просто остаётся заблокированным, строка не нужна.
+	if trusted && !found.IPv4Route && len(targets) > 0 {
+		p.Warnings = append(p.Warnings, "VPN interface has no IPv4 route: IPv4 is blocked for protected applications.")
+	}
 	for _, target := range targets {
 		for _, family := range []string{"V4", "V6"} {
 			layer := "FWPM_LAYER_ALE_AUTH_CONNECT_" + family
@@ -114,8 +110,6 @@ func Build(c config.Config, found *InterfaceState) (Plan, error) {
 					},
 				}
 				p.Add = append(p.Add, permit)
-			} else {
-				p.Warnings = append(p.Warnings, fmt.Sprintf("%s %s: no matching interface route was observed; BLOCK only", identityName(target), family))
 			}
 			p.Add = append(p.Add, block(target, layer))
 			// Inbound-originated flows can send replies; deny until lab evidence supports a narrower rule.

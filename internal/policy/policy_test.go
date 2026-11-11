@@ -131,6 +131,26 @@ func TestPackageFamilyRulesUsePackageID(t *testing.T) {
 	}
 }
 
+func TestWarningsOnlyForRealProblems(t *testing.T) {
+	c := testConfig(t)
+	c.FileNames = []string{"claude.exe", "codex.exe"}
+	c.PackageFamilies = []string{"Microsoft.WindowsCalculator_8wekyb3d8bbwe"}
+	iface := &InterfaceState{GUID: c.VPNInterface.GUID, Description: c.VPNInterface.ExpectedDescription, LUID: 42, IPv4Route: true}
+	p, err := Build(c, iface)
+	if err != nil || len(p.Warnings) != 0 {
+		t.Fatalf("IPv4-only VPN is normal and must not warn: %v %v", p.Warnings, err)
+	}
+	iface.IPv4Route = false
+	p, err = Build(c, iface)
+	if err != nil || len(p.Warnings) != 1 || !strings.Contains(p.Warnings[0], "no IPv4 route") {
+		t.Fatalf("missing IPv4 route must produce exactly one warning: %v %v", p.Warnings, err)
+	}
+	p, err = Build(c, nil)
+	if err != nil || len(p.Warnings) != 1 || !strings.Contains(p.Warnings[0], "not resolved") {
+		t.Fatalf("unresolved VPN must produce exactly one warning: %v %v", p.Warnings, err)
+	}
+}
+
 func TestFileNameRulesUseSuffixMatch(t *testing.T) {
 	c := testConfig(t)
 	c.FileNames = []string{"Claude.exe"}
@@ -166,12 +186,8 @@ func TestFileNameRulesUseSuffixMatch(t *testing.T) {
 	if nameRules != 6 || permits != 2 {
 		t.Fatalf("want 6 file-name rules with 2 permits, got %d and %d", nameRules, permits)
 	}
-	warned := false
-	for _, warning := range p.Warnings {
-		warned = warned || strings.Contains(warning, "File-name targets")
-	}
-	if !warned {
-		t.Fatalf("file-name warning missing: %v", p.Warnings)
+	if len(p.Warnings) != 0 {
+		t.Fatalf("plan with a resolved VPN must not carry fixed notes: %v", p.Warnings)
 	}
 	c.FileNames = []string{"claude.exe"}
 	again, err := Build(c, iface)
