@@ -8,7 +8,7 @@ func TestWindowsABISizes(t *testing.T) {
 	}
 }
 func TestGUIDRoundTrip(t *testing.T) {
-	for _, raw := range []string{"ab5f47c1-3f3e-4ac3-83c0-c2ff7bb68cd8", "c38d57d1-05a7-4c33-904f-7fbceee60e82"} {
+	for _, raw := range []string{"ab5f47c1-3f3e-4ac3-83c0-c2ff7bb68cd8", "c38d57d1-05a7-4c33-904f-7fbceee60e82", "618a9b6d-386b-4136-ad6e-b51587cfb1cd"} {
 		g, err := parseGUID(raw)
 		if err != nil {
 			t.Fatal(err)

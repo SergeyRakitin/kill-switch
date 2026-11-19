@@ -86,11 +86,13 @@ const (
 	byteBlobType      = 12
 	sidType           = 13
 	matchEqual        = 0
+	matchFlagsAllSet  = 6
 	matchFlagsNoneSet = 8
 	matchSuffix       = 11 // FWP_MATCH_PREFIX: имя обманчиво, по документации Microsoft сравнивается КОНЕЦ значения
 	actionBlock       = 0x1001
 	actionPermit      = 0x1002
 	loopbackFlag      = 1
+	reauthorizeFlag   = 4
 )
 
 var (
@@ -99,6 +101,7 @@ var (
 	fieldAppID     = mustGUID("d78e1e87-8644-4ea5-9437-d809ecefc971")
 	fieldPackageID = mustGUID("71bc78fa-f17c-4997-a602-6abb261f351c")
 	fieldNextHop   = mustGUID("93ae8f5b-7f6f-4719-98c8-14e97429ef04")
+	fieldArrival   = mustGUID("618a9b6d-386b-4136-ad6e-b51587cfb1cd")
 	fieldFlags     = mustGUID("632ce23b-5167-435c-86d7-e903684aa80c")
 	layerConnect4  = mustGUID("c38d57d1-05a7-4c33-904f-7fbceee60e82")
 	layerConnect6  = mustGUID("4a72393b-319f-44bc-84c3-ba54dcb3b6b4")

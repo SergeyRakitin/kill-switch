@@ -355,13 +355,21 @@ func Verify(plan policy.Plan, actual Snapshot) error {
 			wantType := uint32(byteBlobType)
 			wantValue := appHash
 			switch c.Field {
-			case "FWPM_CONDITION_IP_NEXTHOP_INTERFACE":
+			case "FWPM_CONDITION_IP_NEXTHOP_INTERFACE", "FWPM_CONDITION_IP_ARRIVAL_INTERFACE":
 				wantType = uint64Type
 				wantValue = c.Value
 			case "FWPM_CONDITION_FLAGS":
 				wantType = uint32Type
-				wantMatch = matchFlagsNoneSet
-				wantValue = "0x00000001"
+				switch {
+				case c.Operator == "FLAGS_NONE_SET" && c.Value == "FWP_CONDITION_FLAG_IS_LOOPBACK":
+					wantMatch = matchFlagsNoneSet
+					wantValue = "0x00000001"
+				case c.Operator == "FLAGS_ALL_SET" && c.Value == "FWP_CONDITION_FLAG_IS_REAUTHORIZE":
+					wantMatch = matchFlagsAllSet
+					wantValue = "0x00000004"
+				default:
+					return fmt.Errorf("invalid flags constraint")
+				}
 			case "FWPM_CONDITION_ALE_PACKAGE_ID":
 				wantType = sidType
 				wantValue, err = packageSIDString(r.PackageFamily)
@@ -601,20 +609,28 @@ func (e *Engine) addRule(r policy.Rule) error {
 				return errors.New("invalid PACKAGE_ID match")
 			}
 			conditions = append(conditions, condition{Field: fieldPackageID, Match: matchEqual, Value: value{Type: sidType, Value: packageSID}})
-		case "FWPM_CONDITION_IP_NEXTHOP_INTERFACE":
+		case "FWPM_CONDITION_IP_NEXTHOP_INTERFACE", "FWPM_CONDITION_IP_ARRIVAL_INTERFACE":
 			if c.Operator != "EQUAL" {
-				return errors.New("invalid next-hop match")
+				return errors.New("invalid interface match")
 			}
 			*luid, err = strconv.ParseUint(strings.TrimPrefix(c.Value, "0x"), 16, 64)
 			if err != nil {
 				return err
 			}
-			conditions = append(conditions, condition{Field: fieldNextHop, Match: matchEqual, Value: value{Type: uint64Type, Value: uintptr(unsafe.Pointer(luid))}})
+			field := fieldNextHop
+			if c.Field == "FWPM_CONDITION_IP_ARRIVAL_INTERFACE" {
+				field = fieldArrival
+			}
+			conditions = append(conditions, condition{Field: field, Match: matchEqual, Value: value{Type: uint64Type, Value: uintptr(unsafe.Pointer(luid))}})
 		case "FWPM_CONDITION_FLAGS":
-			if c.Operator != "FLAGS_NONE_SET" || c.Value != "FWP_CONDITION_FLAG_IS_LOOPBACK" {
+			switch {
+			case c.Operator == "FLAGS_NONE_SET" && c.Value == "FWP_CONDITION_FLAG_IS_LOOPBACK":
+				conditions = append(conditions, condition{Field: fieldFlags, Match: matchFlagsNoneSet, Value: value{Type: uint32Type, Value: loopbackFlag}})
+			case c.Operator == "FLAGS_ALL_SET" && c.Value == "FWP_CONDITION_FLAG_IS_REAUTHORIZE":
+				conditions = append(conditions, condition{Field: fieldFlags, Match: matchFlagsAllSet, Value: value{Type: uint32Type, Value: reauthorizeFlag}})
+			default:
 				return errors.New("invalid flag constraint")
 			}
-			conditions = append(conditions, condition{Field: fieldFlags, Match: matchFlagsNoneSet, Value: value{Type: uint32Type, Value: loopbackFlag}})
 		default:
 			return fmt.Errorf("unsupported condition %s", c.Field)
 		}

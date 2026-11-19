@@ -47,7 +47,7 @@ func TestPermitIsNarrowAndServerIPDoesNotGrantAccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	permits := 0
+	nextHopPermits, reauthPermits := 0, 0
 	keys := map[string]bool{}
 	for _, r := range p.Add {
 		if keys[r.Key] {
@@ -57,30 +57,34 @@ func TestPermitIsNarrowAndServerIPDoesNotGrantAccess(t *testing.T) {
 		if r.Action != "PERMIT_SOFT" {
 			continue
 		}
-		permits++
 		if r.Layer != "FWPM_LAYER_ALE_AUTH_CONNECT_V4" || r.Weight <= 100 || len(r.Conditions) != 3 {
 			t.Fatalf("broad permit: %+v", r)
 		}
-		var app, ifaceCondition, loopback bool
+		var app, ifaceCondition, flagsOK bool
+		switch r.Conditions[1].Field {
+		case "FWPM_CONDITION_IP_NEXTHOP_INTERFACE":
+			nextHopPermits++
+			ifaceCondition = r.Conditions[1].Value == "0x000000000000002A"
+			flagsOK = r.Conditions[2].Operator == "FLAGS_NONE_SET" && r.Conditions[2].Value == "FWP_CONDITION_FLAG_IS_LOOPBACK"
+		case "FWPM_CONDITION_IP_ARRIVAL_INTERFACE":
+			reauthPermits++
+			ifaceCondition = r.Conditions[1].Value == "0x000000000000002A"
+			flagsOK = r.Conditions[2].Operator == "FLAGS_ALL_SET" && r.Conditions[2].Value == "FWP_CONDITION_FLAG_IS_REAUTHORIZE"
+		}
 		for _, cond := range r.Conditions {
 			if strings.Contains(cond.Value, "203.0.113.5") {
 				t.Fatal("VPN server IP became application destination")
 			}
-			switch cond.Field {
-			case "FWPM_CONDITION_ALE_APP_ID":
+			if cond.Field == "FWPM_CONDITION_ALE_APP_ID" {
 				app = true
-			case "FWPM_CONDITION_IP_NEXTHOP_INTERFACE":
-				ifaceCondition = cond.Value == "0x000000000000002A"
-			case "FWPM_CONDITION_FLAGS":
-				loopback = cond.Operator == "FLAGS_NONE_SET" && cond.Value == "FWP_CONDITION_FLAG_IS_LOOPBACK"
 			}
 		}
-		if !app || !ifaceCondition || !loopback {
+		if !app || !ifaceCondition || !flagsOK || r.Conditions[2].Field != "FWPM_CONDITION_FLAGS" {
 			t.Fatalf("permit missing constraint: %+v", r)
 		}
 	}
-	if permits != 1 {
-		t.Fatalf("want one v4 permit and v6 deny, got %d", permits)
+	if nextHopPermits != 1 || reauthPermits != 1 {
+		t.Fatalf("want one next-hop and one reauthorization permit, got %d and %d", nextHopPermits, reauthPermits)
 	}
 	again, err := Build(c, iface)
 	if err != nil {
@@ -176,15 +180,15 @@ func TestFileNameRulesUseSuffixMatch(t *testing.T) {
 		}
 		if r.Action == "PERMIT_SOFT" {
 			permits++
-			if len(r.Conditions) != 3 || r.Conditions[1].Field != "FWPM_CONDITION_IP_NEXTHOP_INTERFACE" || r.Conditions[2].Field != "FWPM_CONDITION_FLAGS" {
+			if len(r.Conditions) != 3 || (r.Conditions[1].Field != "FWPM_CONDITION_IP_NEXTHOP_INTERFACE" && r.Conditions[1].Field != "FWPM_CONDITION_IP_ARRIVAL_INTERFACE") || r.Conditions[2].Field != "FWPM_CONDITION_FLAGS" {
 				t.Fatalf("file-name permit is not limited to VPN: %+v", r)
 			}
 		} else if len(r.Conditions) != 1 {
 			t.Fatalf("file-name block has extra conditions: %+v", r)
 		}
 	}
-	if nameRules != 6 || permits != 2 {
-		t.Fatalf("want 6 file-name rules with 2 permits, got %d and %d", nameRules, permits)
+	if nameRules != 8 || permits != 4 {
+		t.Fatalf("want 8 file-name rules with 4 permits, got %d and %d", nameRules, permits)
 	}
 	if len(p.Warnings) != 0 {
 		t.Fatalf("plan with a resolved VPN must not carry fixed notes: %v", p.Warnings)

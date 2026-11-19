@@ -55,7 +55,8 @@ const layerNames: Record<string, string> = {
 const conditionNames: Record<string, string> = {
   FWPM_CONDITION_ALE_APP_ID: 'Приложение (хеш AppID)',
   FWPM_CONDITION_ALE_PACKAGE_ID: 'MSIX-пакет (SID)',
-  FWPM_CONDITION_IP_NEXTHOP_INTERFACE: 'VPN-интерфейс (LUID)',
+  FWPM_CONDITION_IP_NEXTHOP_INTERFACE: 'VPN-интерфейс отправки (LUID)',
+  FWPM_CONDITION_IP_ARRIVAL_INTERFACE: 'VPN-интерфейс получения (LUID)',
   FWPM_CONDITION_FLAGS: 'Флаги подключения',
 }
 

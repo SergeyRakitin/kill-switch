@@ -114,6 +114,37 @@ func TestVerifyFileNameRule(t *testing.T) {
 	}
 }
 
+func TestVerifyReauthorizationArrivalRule(t *testing.T) {
+	rule := policy.Rule{
+		Key: "rule-reauth", FileName: "codex.exe", Layer: "FWPM_LAYER_ALE_AUTH_CONNECT_V4", Action: "PERMIT_SOFT", Weight: 200, Persistent: true,
+		Conditions: []policy.Condition{
+			{Field: "FWPM_CONDITION_ALE_APP_ID", Operator: "SUFFIX", Value: `\codex.exe`},
+			{Field: "FWPM_CONDITION_IP_ARRIVAL_INTERFACE", Operator: "EQUAL", Value: "0x000000000000002A"},
+			{Field: "FWPM_CONDITION_FLAGS", Operator: "FLAGS_ALL_SET", Value: "FWP_CONDITION_FLAG_IS_REAUTHORIZE"},
+		},
+	}
+	actual := Snapshot{
+		Provider: ObjectState{Present: true, Persistent: true},
+		Sublayer: ObjectState{Present: true, Persistent: true},
+		Filters: []FilterState{{
+			Key: rule.Key, FileName: rule.FileName, Flags: persistent, Layer: rule.Layer, Action: actionPermit, Weight: 200, Persistent: true, ConditionCount: 3,
+			Conditions: []ConditionState{
+				{Field: "FWPM_CONDITION_ALE_APP_ID", Match: matchSuffix, Type: byteBlobType, Value: `\codex.exe`},
+				{Field: "FWPM_CONDITION_IP_ARRIVAL_INTERFACE", Match: matchEqual, Type: uint64Type, Value: "0x000000000000002A"},
+				{Field: "FWPM_CONDITION_FLAGS", Match: matchFlagsAllSet, Type: uint32Type, Value: "0x00000004"},
+			},
+		}},
+	}
+	plan := policy.Plan{Add: []policy.Rule{rule}}
+	if err := Verify(plan, actual); err != nil {
+		t.Fatal(err)
+	}
+	actual.Filters[0].Conditions[2].Match = matchFlagsNoneSet
+	if err := Verify(plan, actual); err == nil {
+		t.Fatal("reauthorization flag with wrong match accepted")
+	}
+}
+
 func TestFileNameSuffixData(t *testing.T) {
 	data, err := fileNameSuffixData("Claude.EXE")
 	if err != nil {
@@ -163,6 +194,34 @@ func TestOwnedFilterWithSuffixCondition(t *testing.T) {
 	}
 	runtime.KeepAlive(conditions)
 	runtime.KeepAlive(blob)
+}
+
+func TestReadReauthorizationArrivalConditions(t *testing.T) {
+	data, err := fileNameSuffixData("codex.exe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	blob := &byteBlob{Size: uint32(len(data) * 2), Data: (*byte)(unsafe.Pointer(&data[0]))}
+	luid := uint64(42)
+	conditions := []condition{
+		{Field: fieldAppID, Match: matchSuffix, Value: value{Type: byteBlobType, Value: uintptr(unsafe.Pointer(blob))}},
+		{Field: fieldArrival, Match: matchEqual, Value: value{Type: uint64Type, Value: uintptr(unsafe.Pointer(&luid))}},
+		{Field: fieldFlags, Match: matchFlagsAllSet, Value: value{Type: uint32Type, Value: reauthorizeFlag}},
+	}
+	f := &filter{Layer: layerConnect4, Flags: persistent, Action: action{Type: actionPermit}, ConditionCount: 3, Conditions: &conditions[0]}
+	if !validOwnedFilter(f) {
+		t.Fatal("reauthorization permit rejected as owned filter")
+	}
+	observed, err := readConditions(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(observed) != 3 || observed[1].Field != "FWPM_CONDITION_IP_ARRIVAL_INTERFACE" || observed[1].Value != "0x000000000000002A" || observed[2].Match != matchFlagsAllSet || observed[2].Value != "0x00000004" {
+		t.Fatalf("observed=%+v", observed)
+	}
+	runtime.KeepAlive(data)
+	runtime.KeepAlive(blob)
+	runtime.KeepAlive(conditions)
 }
 
 func TestSplitTarget(t *testing.T) {

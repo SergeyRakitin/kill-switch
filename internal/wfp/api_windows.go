@@ -372,10 +372,14 @@ func readConditions(f *filter) ([]ConditionState, error) {
 				return nil, err
 			}
 			obs.Value = value
-		case fieldNextHop:
-			obs.Field = "FWPM_CONDITION_IP_NEXTHOP_INTERFACE"
+		case fieldNextHop, fieldArrival:
+			if c.Field == fieldNextHop {
+				obs.Field = "FWPM_CONDITION_IP_NEXTHOP_INTERFACE"
+			} else {
+				obs.Field = "FWPM_CONDITION_IP_ARRIVAL_INTERFACE"
+			}
 			if c.Value.Type != uint64Type || c.Value.Value == 0 {
-				return nil, fmt.Errorf("invalid next-hop condition")
+				return nil, fmt.Errorf("invalid interface condition")
 			}
 			obs.Value = fmt.Sprintf("0x%016X", *(*uint64)(c.Value.pointer()))
 		case fieldFlags:

@@ -110,6 +110,15 @@ func Build(c config.Config, found *InterfaceState) (Plan, error) {
 					},
 				}
 				p.Add = append(p.Add, permit)
+				reauthPermit := Rule{
+					Key: key(identityName(target), layer, "permit-reauth-arrival"), Application: target.Application, PackageFamily: target.PackageFamily, FileName: target.FileName, Layer: layer, Action: "PERMIT_SOFT", Weight: 200, Persistent: true,
+					Conditions: []Condition{
+						identityCondition(target),
+						{Field: "FWPM_CONDITION_IP_ARRIVAL_INTERFACE", Operator: "EQUAL", Value: fmt.Sprintf("0x%016X", found.LUID)},
+						{Field: "FWPM_CONDITION_FLAGS", Operator: "FLAGS_ALL_SET", Value: "FWP_CONDITION_FLAG_IS_REAUTHORIZE"},
+					},
+				}
+				p.Add = append(p.Add, reauthPermit)
 			}
 			p.Add = append(p.Add, block(target, layer))
 			// Inbound-originated flows can send replies; deny until lab evidence supports a narrower rule.
